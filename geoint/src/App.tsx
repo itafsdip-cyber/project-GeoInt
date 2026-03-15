@@ -236,6 +236,36 @@ const osintMetaBadges = (osint = {}) => {
   return badges;
 };
 
+const panelShell = {
+  background: "linear-gradient(180deg, rgba(10,14,20,0.95), rgba(6,10,16,0.98))",
+  border: `1px solid ${C.border}`,
+  borderRadius: 8,
+  boxShadow: "0 14px 32px rgba(0,0,0,0.35)",
+};
+
+const providerStateStyle = (state) => {
+  if (state === "active") return { color: C.green, label: "ACTIVE" };
+  if (state === "unavailable") return { color: C.textDim, label: "UNAVAILABLE" };
+  if (state === "auth_missing") return { color: C.orange, label: "AUTH MISSING" };
+  if (state === "rate_limited") return { color: C.gold, label: "RATE LIMITED" };
+  return { color: C.red, label: "ERROR" };
+};
+
+function OsintBadge({ label, color }) {
+  return <span style={{fontSize:7.5,color,border:`1px solid ${color}66`,background:`${color}1a`,padding:"1px 6px",borderRadius:999,fontFamily:C.mono,letterSpacing:0.35}}>{label}</span>;
+}
+
+function SourceStatusPill({ provider }) {
+  const state = providerStateStyle(provider.state);
+  return (
+    <span title={provider.reason} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 8px",borderRadius:999,border:`1px solid ${state.color}55`,background:`${state.color}12`,fontFamily:C.mono,fontSize:8}}>
+      <span style={{width:6,height:6,borderRadius:"50%",background:state.color,boxShadow:`0 0 8px ${state.color}`}}/>
+      <span style={{color:C.text}}>{provider.name}</span>
+      <span style={{color:state.color}}>{state.label}</span>
+    </span>
+  );
+}
+
 function SrcLink({srcKey,url,compact}){
   const s=SOURCES[srcKey]||{name:srcKey,credibility:70,url:"#",type:"Unknown",bias:"Unknown"};
   const cc=s.credibility>=90?C.green:s.credibility>=70?C.gold:s.credibility>=50?C.orange:C.red;
@@ -293,6 +323,7 @@ function MapView({selected,setSelected,visibleTrajectories,visibleEvents}){
   const filterRef = useRef("ALL");
   const eventLayerRef = useRef(null);
   const [selectedGeoItem, setSelectedGeoItem] = useState(null);
+  const [legendOpen, setLegendOpen] = useState(true);
 
   useEffect(()=>{
     if(leafRef.current) return;
@@ -491,8 +522,16 @@ function MapView({selected,setSelected,visibleTrajectories,visibleEvents}){
     return () => map.off("zoomend", renderClusters);
   }, [visibleEvents]);
 
-  /* legend items — exactly matching screenshot */
-  const legend=[["hostile",C.red,"HOSTILE"],["threat",C.orange,"ACTIVE THREAT"],["ally",C.cyan,"ALLIED"],["monitor",C.gold,"MONITOR"],["event",C.green,"HIGH CONF EVENT"],["approx",C.orange,"APPROX LOC"]];
+  const legend = [
+    ["hostile", C.red, "Hostile actor marker"],
+    ["threat", C.orange, "Active threat marker"],
+    ["ally", C.cyan, "Allied actor marker"],
+    ["monitor", C.gold, "Monitor-only marker"],
+    ["event", C.green, "Precise event marker"],
+    ["approx", C.orange, "Approximate event marker"],
+    ["ring", C.orange, "Uncertainty ring"],
+    ["cluster", C.cyan, "Cluster bubble (report count)"],
+  ];
 
   return(
     <div style={{height:"100%",display:"flex",flexDirection:"column",position:"relative"}}>
@@ -501,14 +540,28 @@ function MapView({selected,setSelected,visibleTrajectories,visibleEvents}){
         <div ref={mapRef} style={{width:"100%",height:"100%"}}/>
         <canvas ref={canvasRef} style={{position:"absolute",top:0,left:0,pointerEvents:"none",zIndex:500}}/>
 
-        {/* Legend — top-left inside map, exactly as in screenshot */}
-        <div style={{position:"absolute",top:10,left:10,zIndex:600,background:"rgba(10,14,22,0.82)",border:`1px solid ${C.border}`,borderRadius:3,padding:"8px 12px",backdropFilter:"blur(4px)"}}>
-          {legend.map(([t,c,l])=>(
-            <div key={t} style={{display:"flex",alignItems:"center",gap:7,marginBottom:4,lastChild:{marginBottom:0}}}>
-              <div style={{width:9,height:9,borderRadius:t==="approx"?2:"50%",background:c,opacity:t==="approx"?0.55:1,flexShrink:0}}/>
-              <span style={{fontSize:9,color:C.textDim,fontFamily:C.mono,letterSpacing:0.5}}>{l}</span>
-            </div>
-          ))}
+        <div style={{position:"absolute",top:10,left:10,zIndex:600,...panelShell,padding:"8px 10px",minWidth:230}}>
+          <button onClick={()=>setLegendOpen((v)=>!v)} style={{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,padding:"5px 8px",cursor:"pointer"}}>
+            <span style={{fontSize:8.5,color:C.cyan,fontFamily:C.mono,letterSpacing:1.2}}>TACTICAL MAP LEGEND</span>
+            <span style={{fontSize:10,color:C.textDim,fontFamily:C.mono}}>{legendOpen?"−":"+"}</span>
+          </button>
+          {legendOpen && (
+            <>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"5px 10px",marginTop:8}}>
+                {legend.map(([t,c,l])=>(
+                  <div key={t} style={{display:"flex",alignItems:"center",gap:6}}>
+                    <div style={{width:9,height:9,borderRadius:t==="approx"?2:"50%",background:c,opacity:t==="approx"?0.55:1,flexShrink:0,border:t==="ring"?`1px dashed ${c}`:"none"}}/>
+                    <span style={{fontSize:7.5,color:C.textDim,fontFamily:C.mono,letterSpacing:0.2}}>{l}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:7,marginTop:8,flexWrap:"wrap"}}>
+                <OsintBadge label="HIGH CONF ≥70" color={C.green}/>
+                <OsintBadge label="MEDIUM 45-69" color={C.gold}/>
+                <OsintBadge label="LOW <45" color={C.orange}/>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Trajectory overlay list — small, top right */}
@@ -924,14 +977,17 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
   }, [filteredEvents, watchItems]);
 
   return(
-    <div style={{display:"flex",flexDirection:"column",gap:10,padding:"10px 12px",overflow:"hidden",minHeight:0}}>
+    <div style={{display:"flex",flexDirection:"column",gap:10,padding:"12px",overflow:"hidden",minHeight:0,background:"linear-gradient(180deg, rgba(4,8,12,0.98), rgba(3,6,10,0.98))"}}>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8,alignItems:"stretch"}}>
         {STATS.map((s,i)=>(
-          <div key={i} style={{background:C.panel,border:`1px solid ${C.border}`,borderTop:`2px solid ${s.c}`,borderRadius:4,padding:"8px 10px",minHeight:86}}>
-            <div style={{fontSize:22,color:s.c,fontFamily:C.mono,fontWeight:"bold",lineHeight:1.05}}>{s.v}</div>
-            <div style={{fontSize:8,color:C.textDim,letterSpacing:1.1,marginTop:3,textTransform:"uppercase"}}>{s.l}</div>
-            <div style={{fontSize:8,color:"#3f5268",marginTop:3}}>{s.n}</div>
-            <a href={s.url} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",marginTop:5,display:"inline-flex",gap:3,fontFamily:C.mono}}>⊕ {s.src} ↗</a>
+          <div key={i} style={{...panelShell,borderTop:`2px solid ${s.c}`,padding:"8px 10px",minHeight:76,display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:6}}>
+              <div style={{fontSize:23,color:s.c,fontFamily:C.mono,fontWeight:"bold",lineHeight:1}}>{s.v}</div>
+              <span style={{fontSize:7,color:C.textDim,fontFamily:C.mono,letterSpacing:0.8}}>LIVE</span>
+            </div>
+            <div style={{fontSize:7.5,color:C.textDim,letterSpacing:1.1,marginTop:3,textTransform:"uppercase"}}>{s.l}</div>
+            <div style={{fontSize:8,color:"#4f637b",marginTop:2}}>{s.n}</div>
+            <a href={s.url} target="_blank" rel="noreferrer" style={{fontSize:7.5,color:C.cyan,textDecoration:"none",marginTop:5,display:"inline-flex",gap:3,fontFamily:C.mono}}>⊕ {s.src} ↗</a>
           </div>
         ))}
       </div>
@@ -946,24 +1002,17 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
 
       <AlertStrip heuristicAlerts={heuristicAlerts}/>
 
-      <div ref={tabRowRef} style={{display:"flex",borderBottom:`1px solid ${C.border}`,flexShrink:0,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"thin",padding:"0 2px 3px",gap:4,WebkitOverflowScrolling:"touch"}}>
+      <div ref={tabRowRef} style={{display:"flex",border:`1px solid ${C.border}`,borderRadius:8,flexShrink:0,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"thin",padding:"6px",gap:5,WebkitOverflowScrolling:"touch",background:"rgba(10,14,20,0.75)"}}>
         {TABS.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{background:tab===t.id?`${C.cyan}14`:"rgba(255,255,255,0.02)",border:`1px solid ${tab===t.id?`${C.cyan}66`:C.border}`,color:tab===t.id?C.cyan:C.textDim,padding:"7px 11px",borderRadius:3,fontFamily:C.mono,fontSize:9,letterSpacing:0.5,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto"}}>{t.l}</button>
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{background:tab===t.id?`linear-gradient(180deg, ${C.cyan}22, ${C.cyan}0f)`:"rgba(255,255,255,0.02)",border:`1px solid ${tab===t.id?`${C.cyan}88`:C.border}`,color:tab===t.id?C.cyan:C.textDim,padding:"7px 11px",borderRadius:6,fontFamily:C.mono,fontSize:9,letterSpacing:0.6,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",fontWeight:tab===t.id?700:500}}>{t.l}</button>
         ))}
       </div>
 
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}><div style={{display:"flex",gap:6,alignItems:"center",overflowX:"auto",paddingBottom:2}}><span style={{fontSize:8,color:C.textDim,letterSpacing:1,fontFamily:C.mono}}>RANGE</span>{TIME_RANGES.map((r)=><button key={r.id} onClick={()=>setTimeRange(r)} style={{background:timeRange.id===r.id?`${C.cyan}22`:"rgba(255,255,255,0.02)",border:`1px solid ${timeRange.id===r.id?C.cyan:C.border}`,color:timeRange.id===r.id?C.cyan:C.textDim,padding:"4px 9px",fontSize:8,borderRadius:3,cursor:"pointer",fontFamily:C.mono}}>{r.label}</button>)}</div><span style={{fontSize:8,color:dataMode===DATA_MODE.LIVE?C.green:dataMode===DATA_MODE.LIVE_UNAVAILABLE?C.orange:C.textDim,fontFamily:C.mono}}>DATA MODE: {dataMode}{statusNote ? ` · ${statusNote}` : ""}</span></div>
 
-      <div style={{display:"flex",flexWrap:"wrap",gap:6,alignItems:"center",background:C.panel,border:`1px solid ${C.border}`,borderRadius:4,padding:"6px 8px"}}>
-        <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono,letterSpacing:1}}>LIVE SOURCES</span>
-        {providerStatuses.map((provider)=>{
-          const color = provider.state === "active" ? C.green : provider.state === "rate_limited" ? C.gold : provider.state === "auth_missing" ? C.orange : C.red;
-          return (
-            <span key={provider.key} title={provider.reason} style={{fontSize:8,color:color,border:`1px solid ${color}55`,background:`${color}11`,borderRadius:3,padding:"2px 6px",fontFamily:C.mono}}>
-              {provider.name}: {String(provider.state).replaceAll("_", " ").toUpperCase()}
-            </span>
-          );
-        })}
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,alignItems:"center",...panelShell,padding:"8px 9px"}}>
+        <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono,letterSpacing:1.2}}>SOURCE MONITOR</span>
+        {providerStatuses.map((provider)=><SourceStatusPill key={provider.key} provider={provider}/>)}
       </div>
 
       <div style={{flex:1,overflow:"auto",minHeight:0,paddingRight:4,border:`1px solid ${C.border}`,borderRadius:4,padding:"8px 8px 8px 4px",background:"rgba(5,9,15,0.45)"}}>
@@ -1193,10 +1242,10 @@ function DraggablePanel({children,title,onClose,boundsRef,initialPosition,zIndex
     return()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};
   },[boundsRef]);
 
-  return <div ref={panelRef} style={{position:"absolute",left:pos.left,top:pos.top,width,maxWidth,height,zIndex,background:"rgba(5,8,13,0.97)",border:`1px solid ${C.border}`,borderRadius:6,padding:"10px 12px",boxShadow:"0 18px 38px rgba(0,0,0,0.55)",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+  return <div ref={panelRef} style={{position:"absolute",left:pos.left,top:pos.top,width,maxWidth,height,zIndex,background:"linear-gradient(180deg, rgba(6,10,16,0.97), rgba(4,8,13,0.99))",border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px",boxShadow:"0 22px 40px rgba(0,0,0,0.58), 0 0 0 1px rgba(0,229,200,0.08) inset",display:"flex",flexDirection:"column",overflow:"hidden"}}>
     <div onPointerDown={(e)=>{drag.current={active:true,startX:e.clientX,startY:e.clientY,baseX:pos.left,baseY:pos.top};}} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,cursor:"grab",borderBottom:`1px solid ${C.border}`,paddingBottom:8}}>
-      <span style={{fontSize:10,color:C.cyan,letterSpacing:1.6,fontFamily:C.mono}}>{title}</span>
-      <button onClick={onClose} style={{background:"none",border:`1px solid ${C.border}`,color:C.textDim,padding:"2px 8px",borderRadius:3,cursor:"pointer"}}>✕</button>
+      <span style={{fontSize:9.5,color:C.cyan,letterSpacing:1.8,fontFamily:C.mono,fontWeight:700}}>{title}</span>
+      <button onClick={onClose} style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${C.border}`,color:C.textDim,padding:"3px 8px",borderRadius:5,cursor:"pointer",fontFamily:C.mono,fontSize:9}}>CLOSE ✕</button>
     </div>
     <div style={{flex:1,minHeight:0,overflow:"hidden"}}>{children}</div>
   </div>;
@@ -1266,9 +1315,9 @@ export default function GEOINTv10(){
   };
 
   const floatingBtn={
-    width:34,height:34,borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center",
-    background:"linear-gradient(180deg, rgba(14,23,32,0.98), rgba(8,15,24,0.96))",border:`1px solid ${C.border}`,color:"#7df9ec",cursor:"pointer",fontSize:13,
-    boxShadow:"0 0 0 1px rgba(0,229,200,0.18) inset, 0 6px 15px rgba(0,0,0,0.45), 0 0 18px rgba(0,229,200,0.25)",transition:"all .15s ease",filter:"drop-shadow(0 0 4px rgba(125,249,236,0.45))"
+    width:38,height:38,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",
+    background:"linear-gradient(180deg, rgba(16,25,36,0.98), rgba(8,14,23,0.96))",border:`1px solid ${C.border}`,color:"#7df9ec",cursor:"pointer",fontSize:13,
+    boxShadow:"0 0 0 1px rgba(0,229,200,0.2) inset, 0 10px 22px rgba(0,0,0,0.52), 0 0 18px rgba(0,229,200,0.25)",transition:"all .15s ease",filter:"drop-shadow(0 0 4px rgba(125,249,236,0.45))"
   };
 
   return(
@@ -1277,25 +1326,28 @@ export default function GEOINTv10(){
         @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@700;900&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
         html,body,#root{height:100%;overflow:hidden;background:#020305;}
-        ::-webkit-scrollbar{width:4px;height:4px;}
+        ::-webkit-scrollbar{width:6px;height:6px;}
         ::-webkit-scrollbar-track{background:#020305;}
-        ::-webkit-scrollbar-thumb{background:#1b232f;border-radius:2px;}
+        ::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#1f2a38,#2d3d52);border-radius:999px;border:1px solid #1b232f;}
+        ::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,#2c3d52,#3d546f);}
         input::placeholder{color:#60748d;}
         button:focus{outline:none;}
-        a:hover{opacity:0.8;}
+        button{transition:all .16s ease;}
+        a{transition:opacity .16s ease;}
+        a:hover{opacity:0.85;}
       `}</style>
 
       {searchOpen&&<GlobalSearch onClose={()=>setSearch(false)}/>}
 
       <div style={{height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden",background:C.bg,fontFamily:C.mono}}>
-        <header style={{background:"#04070b",borderBottom:`1px solid ${C.border}`,height:46,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 20px",flexShrink:0,position:"relative"}}>
+        <header style={{background:"linear-gradient(180deg,#04070b,#04060a)",borderBottom:`1px solid ${C.border}`,height:56,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 18px 0 20px",flexShrink:0,position:"relative",boxShadow:"0 8px 20px rgba(0,0,0,0.28)",gap:12}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <div style={{fontFamily:C.head,fontSize:20,fontWeight:900,letterSpacing:5,color:"#fff"}}>GEO<span style={{color:C.cyan}}>INT</span></div>
-            <span style={{fontSize:10,color:C.cyan,border:`1px solid ${C.cyan}44`,padding:"2px 8px",borderRadius:2,fontFamily:C.mono}}>v6</span>
-            <span style={{fontSize:9,color:C.textDim,letterSpacing:2.5,fontFamily:C.mono}}>OPEN SOURCE INTELLIGENCE</span>
+            <div style={{fontFamily:C.head,fontSize:20,fontWeight:900,letterSpacing:4.3,color:"#fff",textShadow:"0 0 18px rgba(0,229,200,0.25)"}}>GEO<span style={{color:C.cyan}}>INT</span></div>
+            <span style={{fontSize:10,color:C.cyan,border:`1px solid ${C.cyan}44`,padding:"2px 8px",borderRadius:999,fontFamily:C.mono,background:`${C.cyan}11`}}>v6</span>
+            <span style={{fontSize:9,color:C.textDim,letterSpacing:2,fontFamily:C.mono}}>OPEN SOURCE INTELLIGENCE COMMAND DASHBOARD</span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <button onClick={()=>setSearch(true)} style={{display:"flex",alignItems:"center",gap:7,background:"rgba(255,255,255,0.03)",border:`1px solid ${C.border}`,color:C.textDim,padding:"5px 13px",borderRadius:3,fontSize:10,cursor:"pointer",fontFamily:C.mono}}><span style={{fontSize:14}}>⌕</span>SEARCH<span style={{fontSize:8,opacity:0.45,marginLeft:2}}>⌘K</span></button>
+            <button onClick={()=>setSearch(true)} style={{display:"flex",alignItems:"center",gap:7,background:"rgba(255,255,255,0.03)",border:`1px solid ${C.border}`,color:C.textDim,padding:"6px 13px",borderRadius:5,fontSize:10,cursor:"pointer",fontFamily:C.mono,minWidth:116,justifyContent:"center"}}><span style={{fontSize:14}}>⌕</span>SEARCH<span style={{fontSize:8,opacity:0.45,marginLeft:2}}>⌘K</span></button>
             <div style={{display:"flex",gap:4,alignItems:"center"}}>{[C.green,"#26c970",C.gold,C.orange,C.red].map((c,i)=><div key={i} style={{width:12,height:12,borderRadius:"50%",background:c,opacity:i===4&&!blink?0.35:1,transition:"opacity 0.2s"}}/>)}<span style={{color:C.red,fontSize:10,letterSpacing:2,fontFamily:C.mono,marginLeft:5,fontWeight:"bold"}}>SEVERE</span></div>
             <div style={{display:"flex",alignItems:"center",gap:8,position:"relative",zIndex:1200}}>
               <span style={{color:C.textDim,fontSize:10,fontFamily:C.mono,padding:"4px 8px",background:"rgba(255,255,255,0.02)",border:`1px solid ${C.border}`,borderRadius:3,whiteSpace:"nowrap"}}>{fmtTime()}</span>
@@ -1312,7 +1364,7 @@ export default function GEOINTv10(){
         <main style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
           <div ref={mapShellRef} style={{height:"56%",minHeight:320,borderBottom:`1px solid ${C.border}`,position:"relative",isolation:"isolate"}}>
             <MapView selected={selected} setSelected={setSelected} visibleTrajectories={filteredFeed.trajectories} visibleEvents={filteredFeed.events}/>
-            <div style={{position:"absolute",right:12,bottom:92,zIndex:500,display:"flex",flexDirection:"column",gap:8}}>
+            <div style={{position:"absolute",right:12,bottom:92,zIndex:500,display:"flex",flexDirection:"column",gap:6,padding:6,border:`1px solid ${C.border}`,borderRadius:8,background:"rgba(6,11,18,0.78)",backdropFilter:"blur(3px)"}}>
               <button aria-label="Open AI analysis panel" onClick={()=>{setAiOpen(v=>!v);setActiveOverlay("ai");}} style={floatingBtn} title="AI Analysis"><ControlIcon type="ai"/></button>
               <button aria-label="Open live chat panel" onClick={()=>{setChatOpen(v=>!v);setActiveOverlay("chat");}} style={floatingBtn} title="Live Chat"><ControlIcon type="chat"/></button>
             </div>
