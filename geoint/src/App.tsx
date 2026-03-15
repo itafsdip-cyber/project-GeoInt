@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { DATA_MODE } from "./services/data/normalizedEventModel";
+import { DATA_MODE, osintLabel } from "./services/data/normalizedEventModel";
 import { useGeoFeed, useFilteredGeoFeed } from "./services/data/liveDataService";
 import { orderedProviderStatus } from "./services/data/connectors/sourceRegistry";
 
@@ -200,6 +200,13 @@ const sevColor = s => s==="CRITICAL"||s==="critical"?C.red:s==="HIGH"||s==="high
 const typeC    = {STRIKE:C.red,MILITARY:C.orange,DIPLOMATIC:C.green,MARITIME:C.cyan,POLITICAL:C.gold,INTELLIGENCE:C.orange,HUMANITARIAN:C.purple,SECURITY:"#6b7fa3",PROXY:C.orange,ALLIANCE:C.green,FINANCIAL:C.gold,LEVERAGE:C.red,ECONOMIC:C.cyan};
 const nodeCol  = t => ({hostile:C.red,threat:C.orange,ally:C.cyan,monitor:C.gold}[t]||C.gold);
 
+const osintColor = (label) => {
+  if (label === "VERIFIED") return C.green;
+  if (label === "DISPUTED") return C.red;
+  if (label === "MULTI-SOURCE") return C.cyan;
+  return C.gold;
+};
+
 function SrcLink({srcKey,url,compact}){
   const s=SOURCES[srcKey]||{name:srcKey,credibility:70,url:"#",type:"Unknown",bias:"Unknown"};
   const cc=s.credibility>=90?C.green:s.credibility>=70?C.gold:s.credibility>=50?C.orange:C.red;
@@ -243,6 +250,10 @@ function Ticker({items}){
 
 /* ─── MAP VIEW — Leaflet + Canvas trajectory overlay ───────────── */
 function MapView({selected,setSelected,visibleTrajectories}){
+  const trajectoryItems = visibleTrajectories.map((item) => ({
+    ...(item.metadata || item),
+    osint: item.osint || item.metadata?.osint || null,
+  }));
   const mapRef    = useRef(null);
   const leafRef   = useRef(null);
   const canvasRef = useRef(null);
@@ -405,7 +416,7 @@ function MapView({selected,setSelected,visibleTrajectories}){
         {/* Trajectory overlay list — small, top right */}
         {showRef.current&&(
           <div style={{position:"absolute",top:8,right:8,zIndex:600,display:"flex",flexDirection:"column",gap:2}}>
-            {visibleTrajectories.filter(t=>filterRef.current==="ALL"||t.type===filterRef.current).slice(0,5).map(tr=>(
+            {trajectoryItems.filter(t=>filterRef.current==="ALL"||t.type===filterRef.current).slice(0,5).map(tr=>(
               <div key={tr.id} onClick={()=>setSelTraj(s=>s?.id===tr.id?null:tr)}
                 style={{background:"rgba(6,10,20,0.88)",border:`1px solid ${tr.intercepted?C.green:tr.color}44`,borderLeft:`2px solid ${tr.intercepted?C.green:tr.color}`,borderRadius:2,padding:"2px 6px",cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
                 <div style={{width:5,height:5,borderRadius:"50%",background:tr.color,flexShrink:0}}/>
@@ -413,7 +424,7 @@ function MapView({selected,setSelected,visibleTrajectories}){
                 <span style={{fontSize:7,color:tr.intercepted?C.green:C.red,fontFamily:C.mono,marginLeft:"auto"}}>{tr.intercepted?"✓":"●"}</span>
               </div>
             ))}
-            {visibleTrajectories.length===0&&<div style={{background:"rgba(6,10,20,0.88)",border:`1px solid ${C.border}`,borderRadius:2,padding:"4px 8px",fontSize:8,color:C.textDim,fontFamily:C.mono}}>No trajectories in selected range</div>}
+            {trajectoryItems.length===0&&<div style={{background:"rgba(6,10,20,0.88)",border:`1px solid ${C.border}`,borderRadius:2,padding:"4px 8px",fontSize:8,color:C.textDim,fontFamily:C.mono}}>No trajectories in selected range</div>}
           </div>
         )}
 
@@ -429,6 +440,10 @@ function MapView({selected,setSelected,visibleTrajectories}){
               <span><span style={{color:C.textDim}}>STATUS: </span><span style={{color:selTraj.intercepted?C.green:C.red}}>{selTraj.intercepted?"INTERCEPTED":"ACTIVE"}</span></span>
             </div>
             <div style={{fontSize:9,color:C.textDim,marginTop:4}}>{selTraj.detail}</div>
+            {selTraj.osint&&<div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap"}}>
+              {(() => { const label = osintLabel(selTraj.osint); const color = osintColor(label); return <span style={{fontSize:8,color,background:`${color}1c`,border:`1px solid ${color}55`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{label}</span>; })()}
+              <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>SRC {selTraj.osint.crossSourceCount} · LOC {selTraj.osint.locationConfidence}%</span>
+            </div>}
           </div>
         )}
       </div>
@@ -763,6 +778,9 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed}){
             {filteredAlerts.map(a=>{
               const col=sevColor(a.severity);
               const isNew=false;
+              const osint = a.osint || {};
+              const label = osintLabel(osint);
+              const labelColor = osintColor(label);
               return(
                 <div key={a.id} style={{background:isNew?`${col}12`:C.panel,border:`1px solid ${isNew?col:C.border}`,borderLeft:`3px solid ${col}`,borderRadius:3,padding:"10px 15px",transition:"all 0.5s"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
@@ -770,12 +788,13 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed}){
                       <span style={{fontSize:9,color:C.textDim,fontFamily:C.mono}}>{new Date(a.timestamp).toISOString().slice(11,16)} UTC</span>
                       <span style={{fontSize:8,color:col,background:`${col}22`,padding:"1px 7px",borderRadius:2,fontFamily:C.mono,fontWeight:"bold",letterSpacing:1}}>{String(a.severity).toUpperCase()}</span>
                       {isNew&&<span style={{fontSize:7,color:col,fontFamily:C.mono,letterSpacing:1}}>● NEW</span>}
-                      {a.verificationStatus==="verified" ? <span style={{fontSize:8,color:C.green,fontFamily:C.mono}}>✓ VERIFIED</span> : <span style={{fontSize:8,color:C.gold,fontFamily:C.mono}}>⚡ UNCONFIRMED</span>}
+                      <span style={{fontSize:8,color:labelColor,border:`1px solid ${labelColor}55`,background:`${labelColor}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{label}</span>
                     </div>
                     <span style={{fontSize:9,color:C.textDim,fontFamily:C.mono}}>{a.region}</span>
                   </div>
                   <div style={{fontSize:12,color:C.text,lineHeight:"1.45",marginBottom:5,fontWeight:500,fontFamily:C.mono}}>{a.title}</div>
                   <div style={{fontSize:9,color:C.textDim,lineHeight:"1.55",marginBottom:7}}>{a.metadata.detail}</div>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:7}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>CONF {osint.confidenceScore ?? "--"}%</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>SOURCES {osint.crossSourceCount ?? 1}</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>LOC {osint.locationConfidence ?? "--"}%</span></div>
                   <a href={a.metadata.sourceUrl} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",fontFamily:C.mono}}>⊕ {a.source} ↗</a>
                 </div>
               );
@@ -793,10 +812,13 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed}){
               const isEx=expanded===e.id;
               const eventType=e.metadata.type||e.type;
               const ec=typeC[eventType]||C.cyan;
+              const osint=e.osint||{};
+              const label=osintLabel(osint);
+              const labelColor=osintColor(label);
               return(<div key={e.id} onClick={()=>setExpanded(isEx?null:e.id)} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`3px solid ${ec}`,borderRadius:3,padding:"10px 14px",cursor:"pointer"}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{new Date(e.timestamp).toISOString().slice(11,16)} UTC</span><span style={{fontSize:8,color:ec,background:`${ec}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{eventType}</span>{e.verificationStatus==="verified"?<span style={{fontSize:8,color:C.green}}>✓</span>:<span style={{fontSize:8,color:C.gold}}>⚡</span>}</div><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.region}</span></div>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{new Date(e.timestamp).toISOString().slice(11,16)} UTC</span><span style={{fontSize:8,color:ec,background:`${ec}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{eventType}</span><span style={{fontSize:7.5,color:labelColor,border:`1px solid ${labelColor}55`,background:`${labelColor}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{label}</span></div><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.region}</span></div>
                 <div style={{fontSize:11.5,color:C.text,lineHeight:"1.4",marginBottom:isEx?6:0,fontFamily:C.mono}}>{e.title}</div>
-                {isEx&&<><div style={{fontSize:9,color:C.textDim,lineHeight:"1.6",marginBottom:7}}>{e.metadata.detail}</div><div style={{display:"flex",flexWrap:"wrap",gap:3}}>{e.metadata.sources?.map((x,i)=><SrcLink key={i} srcKey={x.key} url={x.url} compact/>)}</div></>}
+                {isEx&&<><div style={{fontSize:9,color:C.textDim,lineHeight:"1.6",marginBottom:7}}>{e.metadata.detail}</div><div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:7}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>CONF {osint.confidenceScore ?? "--"}%</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>SOURCES {osint.crossSourceCount ?? 1}</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>REL {osint.sourceReliability ?? "--"}%</span></div><div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:6}}>{(osint.actorTags || []).slice(0,4).map((tag,i)=><span key={`${e.id}-tag-${i}`} style={{fontSize:7.5,color:C.cyan,border:`1px solid ${C.cyan}44`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{tag}</span>)}</div><div style={{display:"flex",flexWrap:"wrap",gap:3}}>{e.metadata.sources?.map((x,i)=><SrcLink key={i} srcKey={x.key} url={x.url} compact/>)}</div></>}
               </div>);
             })}
           </div>
@@ -1045,7 +1067,7 @@ export default function GEOINTv10(){
 
         <main style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
           <div ref={mapShellRef} style={{height:"56%",minHeight:320,borderBottom:`1px solid ${C.border}`,position:"relative",isolation:"isolate"}}>
-            <MapView selected={selected} setSelected={setSelected} visibleTrajectories={filteredFeed.trajectories.map((event)=>event.metadata)}/>
+            <MapView selected={selected} setSelected={setSelected} visibleTrajectories={filteredFeed.trajectories}/>
             <div style={{position:"absolute",right:12,bottom:92,zIndex:500,display:"flex",flexDirection:"column",gap:8}}>
               <button onClick={()=>{setAiOpen(v=>!v);setActiveOverlay("ai");}} style={floatingBtn} title="AI Analysis"><ControlIcon type="ai"/></button>
               <button onClick={()=>{setChatOpen(v=>!v);setActiveOverlay("chat");}} style={floatingBtn} title="Live Chat"><ControlIcon type="chat"/></button>

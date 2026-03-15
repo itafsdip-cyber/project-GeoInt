@@ -1,5 +1,5 @@
 import { buildDemoFeed } from './demoAdapters';
-import { DATA_MODE } from '../normalizedEventModel';
+import { DATA_MODE, enrichFeedWithOsint } from '../normalizedEventModel';
 
 const LIVE_API_BASE = import.meta.env.VITE_GEOINT_LIVE_API_BASE?.trim();
 
@@ -41,7 +41,7 @@ export async function fetchLiveFeedOrFallback(demoInput) {
     return {
       mode: DATA_MODE.LIVE,
       reason: sourceSummary || 'Connected to live providers',
-      feed: payload,
+      feed: enrichFeedWithOsint(payload),
     };
   } catch (error) {
     return {
