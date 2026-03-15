@@ -1,11 +1,11 @@
-import { normalizeSeverity, normalizeVerification } from "../normalizedEventModel";
+import { enrichFeedWithOsint, normalizeSeverity, normalizeVerification } from "../normalizedEventModel";
 
 const DEMO_CLOCK_UTC = new Date("2026-03-10T04:30:00.000Z");
 
 const withDemoTimestamp = (index, spacingHours = 1.5, startOffsetHours = 0) =>
   new Date(DEMO_CLOCK_UTC.getTime() - ((startOffsetHours + index * spacingHours) * 3600000)).toISOString();
 
-export const buildDemoFeed = ({ alerts, events, timeline, trajectories, sources }) => ({
+export const buildDemoFeed = ({ alerts, events, timeline, trajectories, sources }) => enrichFeedWithOsint({
   alerts: alerts.map((alert, index) => ({
     id: `alert-${alert.id || index}`,
     type: "alert",
