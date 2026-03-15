@@ -9,12 +9,22 @@ import { useState, useEffect, useRef, useMemo } from "react";
    ═══════════════════════════════════════════════════════════════════ */
 
 const C = {
-  bg:"#0b0f1a", panel:"#0d1525", border:"#1c2840",
+  bg:"#020305", panel:"#0a0d12", border:"#1b232f",
   cyan:"#00e5c8", red:"#ff3b55", orange:"#ff8c00",
   green:"#00e676", gold:"#ffc940", purple:"#9b59b6",
-  text:"#c8ddf0", textDim:"#4a6882",
+  text:"#d6e5f4", textDim:"#60748d",
   mono:"'Share Tech Mono',monospace", head:"'Orbitron',monospace",
 };
+
+const TIMEZONES = [
+  { id: "local", label: "Local", zone: undefined },
+  { id: "utc", label: "UTC", zone: "UTC" },
+  { id: "dubai", label: "Gulf / Dubai", zone: "Asia/Dubai" },
+  { id: "israel", label: "Israel", zone: "Asia/Jerusalem" },
+  { id: "india", label: "India", zone: "Asia/Kolkata" },
+  { id: "london", label: "London", zone: "Europe/London" },
+  { id: "newyork", label: "New York", zone: "America/New_York" },
+];
 
 /* ─── DATA ─────────────────────────────────────────────────────── */
 const SOURCES = {
@@ -223,7 +233,7 @@ function Ticker({items}){
   },[]);
   const all=[...items,...items];
   return(
-    <div style={{background:"#070b15",borderBottom:`1px solid ${C.border}`,height:30,display:"flex",alignItems:"center",overflow:"hidden",flexShrink:0}}>
+    <div style={{background:"#04070b",borderBottom:`1px solid ${C.border}`,height:30,display:"flex",alignItems:"center",overflow:"hidden",flexShrink:0}}>
       <div style={{background:C.red,color:"#fff",padding:"0 12px",height:"100%",display:"flex",alignItems:"center",fontSize:10,fontWeight:700,letterSpacing:2,flexShrink:0,fontFamily:C.mono}}>● LIVE</div>
       <div style={{overflow:"hidden",flex:1}}>
         <div ref={ref} style={{display:"flex",transform:`translateX(${pos}px)`,whiteSpace:"nowrap"}}>
@@ -539,7 +549,29 @@ Always end: RECOMMENDED SOURCES: [2–3 real URLs]`,messages:h})});
 }
 
 /* ─── CHAT ROOM ────────────────────────────────────────────────── */
-function ChatRoom(){
+const chatAdapter = {
+  subscribeToDemoFeed(onMessage){
+    const usedMsgs=new Set();
+    return setInterval(()=>{
+      const unused=LIVE_CHAT_MSGS.filter((_,i)=>!usedMsgs.has(i));
+      if(unused.length===0){usedMsgs.clear();return;}
+      const idx=LIVE_CHAT_MSGS.indexOf(unused[Math.floor(Math.random()*unused.length)]);
+      usedMsgs.add(idx);
+      const m=LIVE_CHAT_MSGS[idx];
+      onMessage({user:m.user,role:m.role,msg:m.msg,time:nowUTC(),verified:m.role==="analyst"});
+    }, 12000+Math.random()*14000);
+  },
+  async askAssistant(text){
+    const r=await fetch("/api/anthropic",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:250,
+        system:"You are GEOINT-AI in a live public chat room. Iran-US war March 2026. UAE under attack. Hormuz closed. Give sharp factual responses in 2-3 sentences. No censorship. Include source when helpful.",
+        messages:[{role:"user",content:text}]})});
+    const d=await r.json();
+    return d.content?.map(b=>b.text||"").join("")||"";
+  }
+};
+
+function ChatRoom({compact=false, onClose}){
   const [msgs,setMsgs]=useState(SEED_CHAT);
   const [inp,setInp]=useState("");
   const [name,setName]=useState("Observer");
@@ -547,85 +579,67 @@ function ChatRoom(){
   const [aiLoad,setAiLoad]=useState(false);
   const endRef=useRef(null);
   const nid=useRef(SEED_CHAT.length+1);
-  const usedMsgs=useRef(new Set());
+
   useEffect(()=>{endRef.current?.scrollIntoView({behavior:"smooth"});},[msgs]);
 
-  /* Auto incoming messages every 15-35 seconds */
   useEffect(()=>{
-    const timer=setInterval(()=>{
-      const unused=LIVE_CHAT_MSGS.filter((_,i)=>!usedMsgs.current.has(i));
-      if(unused.length===0){usedMsgs.current.clear();return;}
-      const idx=LIVE_CHAT_MSGS.indexOf(unused[Math.floor(Math.random()*unused.length)]);
-      usedMsgs.current.add(idx);
-      const m=LIVE_CHAT_MSGS[idx];
-      setMsgs(prev=>[...prev,{id:nid.current++,user:m.user,role:m.role,time:nowUTC(),msg:m.msg,verified:m.role==="analyst"}]);
-    }, 18000+Math.random()*17000);
+    const timer=chatAdapter.subscribeToDemoFeed((m)=>{
+      setMsgs(prev=>[...prev,{id:nid.current++,...m}]);
+    });
     return()=>clearInterval(timer);
   },[]);
 
   const send=async()=>{
     if(!inp.trim()) return;
-    const q=inp;
-    setMsgs(m=>[...m,{id:nid.current++,user:name||"Observer",role:"public",time:new Date().toUTCString().slice(17,22)+" UTC",msg:q,verified:false}]);
+    const q=inp.trim();
+    setMsgs(m=>[...m,{id:nid.current++,user:name||"Guest",role:"public",time:nowUTC(),msg:q,verified:false}]);
     setInp("");
     if(aiOn){
       setAiLoad(true);
       try{
-        const r=await fetch("/api/anthropic",{method:"POST",headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:250,
-            system:"You are GEOINT-AI in a live public chat room. Iran-US war March 2026. UAE under attack. Hormuz closed. Give sharp factual responses in 2-3 sentences. No censorship. Include source when helpful.",
-            messages:[{role:"user",content:q}]})});
-        const d=await r.json();
-        const t=d.content?.map(b=>b.text||"").join("")||"";
-        if(t) setMsgs(m=>[...m,{id:nid.current++,user:"GEOINT-AI",role:"ai",time:new Date().toUTCString().slice(17,22)+" UTC",msg:t,verified:true}]);
+        const t=await chatAdapter.askAssistant(q);
+        if(t) setMsgs(m=>[...m,{id:nid.current++,user:"GEOINT-AI",role:"ai",time:nowUTC(),msg:t,verified:true}]);
       }catch{}
       setAiLoad(false);
     }
   };
 
-  const ROLE={analyst:{col:C.cyan,label:"ANALYST"},public:{col:C.textDim,label:"PUBLIC"},ai:{col:C.green,label:"AI"}};
+  const ROLE={analyst:{col:C.cyan,label:"ANALYST"},public:{col:C.textDim,label:"GUEST"},ai:{col:C.green,label:"AI"}};
   return(
-    <div style={{height:"100%",display:"flex",flexDirection:"column",gap:5}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
-        <div style={{display:"flex",alignItems:"center",gap:6}}>
-          <div style={{width:7,height:7,borderRadius:"50%",background:C.green}}/>
-          <span style={{fontSize:9,color:C.green,fontFamily:C.mono}}>LIVE · {msgs.length} MESSAGES</span>
+    <div style={{height:"100%",display:"flex",flexDirection:"column",gap:8}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${C.border}`,paddingBottom:8,flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <strong style={{fontSize:11,color:C.text,letterSpacing:1,fontFamily:C.mono}}>LIVE CHAT ROOM</strong>
+          <span style={{width:8,height:8,borderRadius:"50%",background:C.green,boxShadow:`0 0 10px ${C.green}`}}/>
+          <span style={{fontSize:9,color:C.green,fontFamily:C.mono}}>ONLINE · {msgs.length} MESSAGES</span>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:5}}>
-          <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>AI ASSIST:</span>
-          <button onClick={()=>setAiOn(a=>!a)}
-            style={{background:aiOn?`${C.cyan}1a`:"none",border:`1px solid ${aiOn?C.cyan:C.border}`,color:aiOn?C.cyan:C.textDim,padding:"2px 9px",borderRadius:2,fontFamily:C.mono,fontSize:8,cursor:"pointer"}}>
-            {aiOn?"ON ●":"OFF"}
-          </button>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>AI ASSIST</span>
+          <button onClick={()=>setAiOn(v=>!v)} style={{background:aiOn?`${C.cyan}1a`:"none",border:`1px solid ${aiOn?C.cyan:C.border}`,color:aiOn?C.cyan:C.textDim,padding:"2px 8px",borderRadius:2,fontFamily:C.mono,fontSize:8,cursor:"pointer"}}>{aiOn?"ON":"OFF"}</button>
+          {onClose&&<button onClick={onClose} style={{background:"none",border:`1px solid ${C.border}`,color:C.textDim,padding:"2px 8px",borderRadius:2,cursor:"pointer"}}>✕</button>}
         </div>
       </div>
-      <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:4,minHeight:0}}>
-        {msgs.map(m=>{
-          const rs=ROLE[m.role]||ROLE.public;
-          return(
-            <div key={m.id} style={{background:m.role==="ai"?`${C.green}0a`:m.role==="analyst"?`${C.cyan}07`:"rgba(255,255,255,0.02)",border:`1px solid ${C.border}`,borderLeft:`2px solid ${rs.col}`,borderRadius:3,padding:"6px 10px"}}>
-              <div style={{display:"flex",gap:5,alignItems:"center",marginBottom:3,flexWrap:"wrap"}}>
-                <span style={{color:rs.col,fontSize:9,fontFamily:C.mono,fontWeight:"bold"}}>{m.user}</span>
-                <span style={{fontSize:7,color:rs.col,background:`${rs.col}1a`,padding:"1px 4px",borderRadius:2,fontFamily:C.mono}}>{rs.label}</span>
-                {m.verified&&<span style={{fontSize:7,color:C.green}}>✓</span>}
-                <span style={{color:C.textDim,fontSize:8,marginLeft:"auto",fontFamily:C.mono}}>{m.time}</span>
-              </div>
-              <div style={{fontSize:10.5,color:C.text,lineHeight:"1.55"}}>{m.msg}</div>
+
+      <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:5,minHeight:0,paddingRight:4}}>
+        {msgs.map(m=>{const rs=ROLE[m.role]||ROLE.public;return(
+          <div key={m.id} style={{background:m.role==="ai"?`${C.green}10`:m.role==="analyst"?`${C.cyan}0f`:"rgba(255,255,255,0.02)",border:`1px solid ${C.border}`,borderLeft:`2px solid ${rs.col}`,borderRadius:3,padding:"7px 10px"}}>
+            <div style={{display:"flex",gap:5,alignItems:"center",marginBottom:3,flexWrap:"wrap"}}>
+              <span style={{color:rs.col,fontSize:9,fontFamily:C.mono,fontWeight:"bold"}}>{m.user || "Guest"}</span>
+              <span style={{fontSize:7,color:rs.col,background:`${rs.col}1a`,padding:"1px 4px",borderRadius:2,fontFamily:C.mono}}>{rs.label}</span>
+              {m.verified&&<span style={{fontSize:7,color:C.green}}>✓</span>}
+              <span style={{color:C.textDim,fontSize:8,marginLeft:"auto",fontFamily:C.mono}}>{m.time}</span>
             </div>
-          );
-        })}
+            <div style={{fontSize:10.5,color:C.text,lineHeight:"1.5"}}>{m.msg}</div>
+          </div>
+        );})}
         {aiLoad&&<div style={{border:`1px solid ${C.border}`,borderLeft:`2px solid ${C.green}`,borderRadius:3,padding:"6px 10px"}}><span style={{fontSize:9,color:C.green,fontFamily:C.mono}}>GEOINT-AI analyzing...</span></div>}
         <div ref={endRef}/>
       </div>
-      {aiOn&&<div style={{fontSize:8,color:C.green,fontFamily:C.mono,padding:"3px 8px",background:`${C.green}0a`,border:`1px solid ${C.green}22`,borderRadius:2,flexShrink:0}}>✓ AI ASSIST ACTIVE</div>}
+
       <div style={{display:"flex",gap:5,flexShrink:0}}>
-        <input value={name} onChange={e=>setName(e.target.value)} placeholder="Name"
-          style={{width:80,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,borderRadius:3,padding:"7px 9px",color:C.cyan,fontFamily:C.mono,fontSize:10,outline:"none"}}/>
-        <input value={inp} onChange={e=>setInp(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()}
-          placeholder="Share intel, ask questions..."
-          style={{flex:1,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,borderRadius:3,padding:"7px 11px",color:C.text,fontFamily:C.mono,fontSize:10.5,outline:"none"}}/>
-        <button onClick={send}
-          style={{background:`${C.cyan}15`,border:`1px solid ${C.cyan}44`,color:C.cyan,padding:"7px 12px",borderRadius:3,fontFamily:C.mono,fontSize:9,cursor:"pointer"}}>SEND</button>
+        <input value={name} onChange={e=>setName(e.target.value)} placeholder="Username" style={{width:compact?90:110,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,borderRadius:3,padding:"7px 9px",color:C.cyan,fontFamily:C.mono,fontSize:10,outline:"none"}}/>
+        <input value={inp} onChange={e=>setInp(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder="Share intel, ask questions..." style={{flex:1,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,borderRadius:3,padding:"7px 11px",color:C.text,fontFamily:C.mono,fontSize:10.5,outline:"none"}}/>
+        <button onClick={send} style={{background:`${C.cyan}15`,border:`1px solid ${C.cyan}44`,color:C.cyan,padding:"7px 12px",borderRadius:3,fontFamily:C.mono,fontSize:9,cursor:"pointer"}}>SEND</button>
       </div>
     </div>
   );
@@ -641,19 +655,15 @@ function RightPanel(){
   const [dRes,setDRes]=useState(null);
   const [dLoad,setDLoad]=useState(false);
 
-  /* ── LIVE STATE ── */
   const [liveAlerts,setLiveAlerts]   = useState([...ALERTS]);
   const [missiles,setMissiles]       = useState(189);
   const [drones,setDrones]           = useState(876);
   const [sites,setSites]             = useState(5);
   const [wave,setWave]               = useState(21);
-  const [liveTicker,setLiveTicker]   = useState([...TICKER_ITEMS]);
-  const [newAlert,setNewAlert]       = useState(null); // flashing new alert
+  const [newAlert,setNewAlert]       = useState(null);
   const usedAlerts  = useRef(new Set());
-  const usedTickers = useRef(new Set());
 
   useEffect(()=>{
-    // New alert every 25–40 seconds
     const alertTimer=setInterval(()=>{
       const unused=LIVE_ALERTS.filter((_,i)=>!usedAlerts.current.has(i));
       if(unused.length===0){usedAlerts.current.clear();return;}
@@ -666,7 +676,6 @@ function RightPanel(){
       setTimeout(()=>setNewAlert(null),4000);
     }, 28000 + Math.random()*12000);
 
-    // Counters tick up every 8–15 seconds
     const counterTimer=setInterval(()=>{
       const r=Math.random();
       if(r<0.45)      setMissiles(m=>m+Math.floor(Math.random()*3+1));
@@ -675,22 +684,11 @@ function RightPanel(){
       else            setSites(s=>s+(Math.random()<0.1?1:0));
     }, 10000);
 
-    // New ticker item every 20 seconds
-    const tickerTimer=setInterval(()=>{
-      const unused=LIVE_TICKER.filter(t=>!usedTickers.current.has(t));
-      if(unused.length===0){usedTickers.current.clear();return;}
-      const t=unused[Math.floor(Math.random()*unused.length)];
-      usedTickers.current.add(t);
-      setLiveTicker(prev=>[t,...prev].slice(0,16));
-    }, 20000);
-
-    return()=>{clearInterval(alertTimer);clearInterval(counterTimer);clearInterval(tickerTimer);};
+    return()=>{clearInterval(alertTimer);clearInterval(counterTimer);};
   },[]);
 
-  /* screenshot exact tabs */
   const TABS=[
     {id:"monitor",l:"UAE MONITOR"},
-    {id:"chat",   l:"LIVE CHAT"},
     {id:"events", l:"LIVE EVENTS"},
     {id:"timeline",l:"TIMELINE"},
     {id:"influence",l:"INFLUENCE MAP"},
@@ -714,52 +712,37 @@ function RightPanel(){
     setDLoad(false);
   };
 
-  /* ── UAE MONITOR stat cards — live counters ── */
   const STATS=[
-    {v:missiles.toString(), l:"MISSILES FIRED AT UAE",n:"since Feb 28",      c:C.red,   src:"UAE MoD",  url:"https://mod.gov.ae"},
-    {v:drones.toString(),   l:"DRONES INTERCEPTED",  n:"of "+(drones+65)+" launched",c:C.cyan,  src:"UAE NCEMA",url:"https://ncema.gov.ae"},
-    {v:sites+"+",           l:"SITES HIT",           n:"incl. US Consulate", c:C.orange,src:"AP",       url:"https://apnews.com"},
-    {v:wave.toString(),     l:"WAVE NUMBER",          n:"ongoing today",      c:C.cyan,  src:"Reuters",  url:"https://reuters.com"},
+    {v:missiles.toString(), l:"MISSILES FIRED AT UAE",n:"since Feb 28", c:C.red, src:"UAE MoD", url:"https://mod.gov.ae"},
+    {v:drones.toString(), l:"DRONES INTERCEPTED", n:"of "+(drones+65)+" launched", c:C.cyan, src:"UAE NCEMA", url:"https://ncema.gov.ae"},
+    {v:sites+"+", l:"SITES HIT", n:"incl. US Consulate", c:C.orange, src:"AP", url:"https://apnews.com"},
+    {v:wave.toString(), l:"WAVE NUMBER", n:"ongoing today", c:C.cyan, src:"Reuters", url:"https://reuters.com"},
   ];
 
   const IC={PROXY:C.orange,ALLIANCE:C.green,SECURITY:C.green,FINANCIAL:C.gold,LEVERAGE:C.red,ECONOMIC:C.cyan,MILITARY:C.orange};
 
   return(
-    <div style={{height:"100%",display:"flex",flexDirection:"column"}}>
-      {/* Tab row — "UAE MONITOR  LIVE CHAT" style as in screenshot */}
-      <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,flexShrink:0,marginBottom:0}}>
-        {TABS.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)}
-            style={{background:"none",border:"none",
-                    borderBottom:tab===t.id?`2px solid ${C.cyan}`:"2px solid transparent",
-                    color:tab===t.id?C.cyan:C.textDim,
-                    padding:"9px 14px",fontFamily:C.mono,fontSize:9,
-                    letterSpacing:0.5,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>
-            {t.l}
-          </button>
+    <div style={{display:"flex",flexDirection:"column",gap:14,padding:"14px",overflow:"hidden",minHeight:0}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:10}}>
+        {STATS.map((s,i)=>(
+          <div key={i} style={{background:C.panel,border:`1px solid ${C.border}`,borderTop:`2px solid ${s.c}`,borderRadius:4,padding:"12px 14px"}}>
+            <div style={{fontSize:30,color:s.c,fontFamily:C.mono,fontWeight:"bold",lineHeight:1.05}}>{s.v}</div>
+            <div style={{fontSize:8,color:C.textDim,letterSpacing:1.1,marginTop:5,textTransform:"uppercase"}}>{s.l}</div>
+            <div style={{fontSize:8,color:"#3f5268",marginTop:3}}>{s.n}</div>
+            <a href={s.url} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",marginTop:7,display:"inline-flex",gap:3,fontFamily:C.mono}}>⊕ {s.src} ↗</a>
+          </div>
         ))}
       </div>
 
-      <div style={{flex:1,overflowY:"auto",padding:"12px 14px",minHeight:0}}>
+      <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+        {TABS.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{background:"none",border:"none",borderBottom:tab===t.id?`2px solid ${C.cyan}`:"2px solid transparent",color:tab===t.id?C.cyan:C.textDim,padding:"9px 14px",fontFamily:C.mono,fontSize:9,letterSpacing:0.5,cursor:"pointer",whiteSpace:"nowrap"}}>{t.l}</button>
+        ))}
+      </div>
 
-        {/* ── UAE MONITOR ── */}
+      <div style={{flex:1,overflowY:"auto",minHeight:0,paddingRight:4}}>
         {tab==="monitor"&&(
           <div style={{display:"flex",flexDirection:"column",gap:9}}>
-            {/* 2×2 stat grid */}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-              {STATS.map((s,i)=>(
-                <div key={i} style={{background:C.panel,border:`1px solid ${C.border}`,borderTop:`2px solid ${s.c}`,borderRadius:3,padding:"14px 16px"}}>
-                  <div style={{fontSize:36,color:s.c,fontFamily:C.mono,fontWeight:"bold",lineHeight:1.05}}>{s.v}</div>
-                  <div style={{fontSize:8,color:C.textDim,letterSpacing:1.2,marginTop:6,textTransform:"uppercase"}}>{s.l}</div>
-                  <div style={{fontSize:8,color:"#334560",marginTop:3}}>{s.n}</div>
-                  <a href={s.url} target="_blank" rel="noreferrer"
-                     style={{fontSize:8,color:C.cyan,textDecoration:"none",marginTop:8,display:"inline-flex",gap:3,fontFamily:C.mono}}>
-                    ⊕ {s.src} ↗
-                  </a>
-                </div>
-              ))}
-            </div>
-            {/* Alert cards — live updating */}
             {liveAlerts.map(a=>{
               const col=sevColor(a.sev);
               const isNew=a.id===newAlert;
@@ -770,9 +753,7 @@ function RightPanel(){
                       <span style={{fontSize:9,color:C.textDim,fontFamily:C.mono}}>{a.time}</span>
                       <span style={{fontSize:8,color:col,background:`${col}22`,padding:"1px 7px",borderRadius:2,fontFamily:C.mono,fontWeight:"bold",letterSpacing:1}}>{a.sev}</span>
                       {isNew&&<span style={{fontSize:7,color:col,fontFamily:C.mono,letterSpacing:1}}>● NEW</span>}
-                      {a.verified
-                        ?<span style={{fontSize:8,color:C.green,fontFamily:C.mono}}>✓ VERIFIED</span>
-                        :<span style={{fontSize:8,color:C.gold,fontFamily:C.mono}}>⚡ UNCONFIRMED</span>}
+                      {a.verified ? <span style={{fontSize:8,color:C.green,fontFamily:C.mono}}>✓ VERIFIED</span> : <span style={{fontSize:8,color:C.gold,fontFamily:C.mono}}>⚡ UNCONFIRMED</span>}
                     </div>
                     <span style={{fontSize:9,color:C.textDim,fontFamily:C.mono}}>{a.loc}</span>
                   </div>
@@ -785,175 +766,40 @@ function RightPanel(){
           </div>
         )}
 
-        {/* ── LIVE CHAT ── */}
-        {tab==="chat"&&(
-          <div style={{height:"calc(100vh - 200px)"}}>
-            <ChatRoom/>
-          </div>
-        )}
-
-        {/* ── LIVE EVENTS ── */}
         {tab==="events"&&(
           <div style={{display:"flex",flexDirection:"column",gap:7}}>
             <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4}}>
-              {ET.map(t=>(
-                <button key={t} onClick={()=>setEvFilter(t)}
-                  style={{background:evFilter===t?`${C.cyan}18`:"none",border:`1px solid ${evFilter===t?C.cyan:C.border}`,color:evFilter===t?C.cyan:C.textDim,padding:"3px 8px",fontSize:8,borderRadius:2,cursor:"pointer",fontFamily:C.mono}}>
-                  {t}
-                </button>
-              ))}
+              {ET.map(t=>(<button key={t} onClick={()=>setEvFilter(t)} style={{background:evFilter===t?`${C.cyan}18`:"none",border:`1px solid ${evFilter===t?C.cyan:C.border}`,color:evFilter===t?C.cyan:C.textDim,padding:"3px 8px",fontSize:8,borderRadius:2,cursor:"pointer",fontFamily:C.mono}}>{t}</button>))}
             </div>
             {(evFilter==="ALL"?EVENTS:EVENTS.filter(e=>e.type===evFilter)).map(e=>{
               const isEx=expanded===e.id;
               const ec=typeC[e.type]||C.cyan;
-              return(
-                <div key={e.id} onClick={()=>setExpanded(isEx?null:e.id)}
-                  style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`3px solid ${ec}`,borderRadius:3,padding:"10px 14px",cursor:"pointer"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                    <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
-                      <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.time} · {e.date}</span>
-                      <span style={{fontSize:8,color:ec,background:`${ec}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{e.type}</span>
-                      {e.verified?<span style={{fontSize:8,color:C.green}}>✓</span>:<span style={{fontSize:8,color:C.gold}}>⚡</span>}
-                    </div>
-                    <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.region}</span>
-                  </div>
-                  <div style={{fontSize:11.5,color:C.text,lineHeight:"1.4",marginBottom:isEx?6:0,fontFamily:C.mono}}>{e.title}</div>
-                  {isEx&&(
-                    <>
-                      <div style={{fontSize:9,color:C.textDim,lineHeight:"1.6",marginBottom:7}}>{e.detail}</div>
-                      <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
-                        {e.sources.map((s,i)=><SrcLink key={i} srcKey={s.key} url={s.url} compact/>)}
-                      </div>
-                    </>
-                  )}
-                </div>
-              );
+              return(<div key={e.id} onClick={()=>setExpanded(isEx?null:e.id)} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`3px solid ${ec}`,borderRadius:3,padding:"10px 14px",cursor:"pointer"}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.time} · {e.date}</span><span style={{fontSize:8,color:ec,background:`${ec}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{e.type}</span>{e.verified?<span style={{fontSize:8,color:C.green}}>✓</span>:<span style={{fontSize:8,color:C.gold}}>⚡</span>}</div><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.region}</span></div>
+                <div style={{fontSize:11.5,color:C.text,lineHeight:"1.4",marginBottom:isEx?6:0,fontFamily:C.mono}}>{e.title}</div>
+                {isEx&&<><div style={{fontSize:9,color:C.textDim,lineHeight:"1.6",marginBottom:7}}>{e.detail}</div><div style={{display:"flex",flexWrap:"wrap",gap:3}}>{e.sources.map((x,i)=><SrcLink key={i} srcKey={x.key} url={x.url} compact/>)}</div></>}
+              </div>);
             })}
           </div>
         )}
 
-        {/* ── TIMELINE ── */}
-        {tab==="timeline"&&(
-          <div style={{position:"relative",paddingLeft:22}}>
-            <div style={{position:"absolute",left:9,top:0,bottom:0,width:1,background:`linear-gradient(180deg,transparent,${C.cyan}55,transparent)`}}/>
-            {TIMELINE.map((t,i)=>{
-              const col=typeC[t.type]||C.cyan;
-              return(
-                <div key={i} style={{position:"relative",paddingBottom:16}}>
-                  <div style={{position:"absolute",left:-15,top:5,width:8,height:8,borderRadius:"50%",background:col,border:`2px solid ${C.bg}`}}/>
-                  <div style={{fontSize:8,color:C.cyan,fontFamily:C.mono,marginBottom:2}}>{t.date}</div>
-                  <div style={{fontSize:10.5,color:C.text,lineHeight:"1.5",marginBottom:5}}>{t.event}</div>
-                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                    <span style={{fontSize:7,color:col,background:`${col}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{t.type}</span>
-                    <a href={t.srcUrl} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",fontFamily:C.mono}}>⊕ {t.src} ↗</a>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        {tab==="timeline"&&(<div style={{position:"relative",paddingLeft:22}}><div style={{position:"absolute",left:9,top:0,bottom:0,width:1,background:`linear-gradient(180deg,transparent,${C.cyan}55,transparent)`}}/>{TIMELINE.map((t,i)=>{const col=typeC[t.type]||C.cyan;return(<div key={i} style={{position:"relative",paddingBottom:16}}><div style={{position:"absolute",left:-15,top:5,width:8,height:8,borderRadius:"50%",background:col,border:`2px solid ${C.bg}`}}/><div style={{fontSize:8,color:C.cyan,fontFamily:C.mono,marginBottom:2}}>{t.date}</div><div style={{fontSize:10.5,color:C.text,lineHeight:"1.5",marginBottom:5}}>{t.event}</div><div style={{display:"flex",gap:6,alignItems:"center"}}><span style={{fontSize:7,color:col,background:`${col}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{t.type}</span><a href={t.srcUrl} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",fontFamily:C.mono}}>⊕ {t.src} ↗</a></div></div>);})}</div>)}
 
-        {/* ── INFLUENCE MAP ── */}
-        {tab==="influence"&&(
-          <div style={{display:"flex",flexDirection:"column",gap:5}}>
-            {INFLUENCES.map((inf,i)=>{
-              const col=IC[inf.type]||C.cyan;
-              return(
-                <div key={i} onClick={()=>setInfExp(infExp===i?null:i)}
-                  style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:3,padding:"9px 12px",cursor:"pointer"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
-                    <span style={{fontSize:10,color:C.text,minWidth:130,fontFamily:C.mono}}>{inf.from}</span>
-                    <div style={{flex:1,height:2,background:"rgba(255,255,255,0.05)",position:"relative",minWidth:40}}>
-                      <div style={{width:`${inf.str}%`,height:"100%",background:`linear-gradient(90deg,${col}44,${col})`}}/>
-                      <div style={{position:"absolute",right:0,top:-3,width:7,height:7,background:col,clipPath:"polygon(0 50%,100% 0,100% 100%)"}}/>
-                    </div>
-                    <span style={{fontSize:10,color:C.text,minWidth:110,textAlign:"right",fontFamily:C.mono}}>{inf.to}</span>
-                    <span style={{fontSize:8,color:col,background:`${col}18`,padding:"2px 7px",borderRadius:2,fontFamily:C.mono}}>{inf.type}</span>
-                    <span style={{fontSize:9,color:col,fontFamily:C.mono,minWidth:26}}>{inf.str}%</span>
-                  </div>
-                  {infExp===i&&(
-                    <div style={{marginTop:8}}>
-                      <div style={{fontSize:9,color:C.textDim,lineHeight:"1.65",marginBottom:6}}>{inf.note}</div>
-                      <SrcLink srcKey={inf.src} url={inf.srcUrl}/>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+        {tab==="influence"&&(<div style={{display:"flex",flexDirection:"column",gap:5}}>{INFLUENCES.map((inf,i)=>{const col=IC[inf.type]||C.cyan;return(<div key={i} onClick={()=>setInfExp(infExp===i?null:i)} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${col}`,borderRadius:3,padding:"8px 12px",cursor:"pointer"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}><div style={{display:"flex",gap:7,alignItems:"center",minWidth:0}}><span style={{fontSize:10,color:C.text,whiteSpace:"nowrap"}}>{inf.from}</span><span style={{fontSize:10,color:col}}>→</span><span style={{fontSize:10,color:C.text,whiteSpace:"nowrap"}}>{inf.to}</span></div><span style={{fontSize:8,color:col,background:`${col}18`,padding:"2px 7px",borderRadius:2,fontFamily:C.mono}}>{inf.type}</span><span style={{fontSize:9,color:col,fontFamily:C.mono,minWidth:26}}>{inf.str}%</span></div>{infExp===i&&<div style={{marginTop:8}}><div style={{fontSize:9,color:C.textDim,lineHeight:"1.65",marginBottom:6}}>{inf.note}</div><SrcLink srcKey={inf.src} url={inf.srcUrl}/></div>}</div>);})}</div>)}
 
-        {/* ── DISINFO ── */}
         {tab==="disinfo"&&(
           <div style={{display:"flex",flexDirection:"column",gap:7}}>
             <div style={{display:"flex",gap:5,marginBottom:4}}>
-              <input value={dInp} onChange={e=>setDInp(e.target.value)} onKeyDown={e=>e.key==="Enter"&&checkD()}
-                placeholder="Paste any claim to fact-check..."
-                style={{flex:1,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,borderRadius:3,padding:"8px 12px",color:C.text,fontFamily:C.mono,fontSize:10.5,outline:"none"}}/>
-              <button onClick={checkD} disabled={dLoad}
-                style={{background:`${C.cyan}14`,border:`1px solid ${C.cyan}40`,color:C.cyan,padding:"8px 13px",borderRadius:3,fontFamily:C.mono,fontSize:9,cursor:"pointer"}}>
-                {dLoad?"...":"VERIFY"}
-              </button>
+              <input value={dInp} onChange={e=>setDInp(e.target.value)} onKeyDown={e=>e.key==="Enter"&&checkD()} placeholder="Paste any claim to fact-check..." style={{flex:1,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,borderRadius:3,padding:"8px 12px",color:C.text,fontFamily:C.mono,fontSize:10.5,outline:"none"}}/>
+              <button onClick={checkD} disabled={dLoad} style={{background:`${C.cyan}14`,border:`1px solid ${C.cyan}40`,color:C.cyan,padding:"8px 13px",borderRadius:3,fontFamily:C.mono,fontSize:9,cursor:"pointer"}}>{dLoad?"...":"VERIFY"}</button>
             </div>
-            {dRes&&(
-              <div style={{background:C.panel,border:`1px solid ${dRes.color}44`,borderLeft:`3px solid ${dRes.color}`,borderRadius:3,padding:12,marginBottom:4}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
-                  <span style={{color:dRes.color,fontFamily:C.mono,fontSize:13,letterSpacing:2}}>{dRes.verdict}</span>
-                  <span style={{color:dRes.color,fontSize:10,fontFamily:C.mono}}>CONFIDENCE: {dRes.confidence}%</span>
-                </div>
-                <div style={{fontSize:10.5,color:C.text,lineHeight:"1.65",marginBottom:7}}>{dRes.reasoning}</div>
-                {dRes.redFlags?.length>0&&(
-                  <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:7}}>
-                    {dRes.redFlags.map((f,i)=><span key={i} style={{fontSize:8,background:`${dRes.color}14`,color:dRes.color,padding:"2px 7px",borderRadius:2}}>⚑ {f}</span>)}
-                  </div>
-                )}
-                {dRes.recommendedSources?.map((s,i)=>{
-                  const[n,...r]=s.split(": ");
-                  return<a key={i} href={r.join(": ")||"#"} target="_blank" rel="noreferrer" style={{display:"block",fontSize:9,color:C.gold,textDecoration:"none",marginBottom:2,fontFamily:C.mono}}>⊕ {n} ↗</a>;
-                })}
-              </div>
-            )}
+            {dRes&&<div style={{background:C.panel,border:`1px solid ${dRes.color}44`,borderLeft:`3px solid ${dRes.color}`,borderRadius:3,padding:12,marginBottom:4}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}><span style={{color:dRes.color,fontFamily:C.mono,fontSize:13,letterSpacing:2}}>{dRes.verdict}</span><span style={{color:dRes.color,fontSize:10,fontFamily:C.mono}}>CONFIDENCE: {dRes.confidence}%</span></div><div style={{fontSize:10.5,color:C.text,lineHeight:"1.65",marginBottom:7}}>{dRes.reasoning}</div>{dRes.redFlags?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:7}}>{dRes.redFlags.map((f,i)=><span key={i} style={{fontSize:8,background:`${dRes.color}14`,color:dRes.color,padding:"2px 7px",borderRadius:2}}>⚑ {f}</span>)}</div>}{dRes.recommendedSources?.map((x,i)=>{const[n,...r]=x.split(": ");return <a key={i} href={r.join(": ")||"#"} target="_blank" rel="noreferrer" style={{display:"block",fontSize:9,color:C.gold,textDecoration:"none",marginBottom:2,fontFamily:C.mono}}>⊕ {n} ↗</a>;})}</div>}
             <div style={{fontSize:8,color:C.textDim,letterSpacing:1,fontFamily:C.mono,marginBottom:4}}>RECENTLY VERIFIED CASES</div>
-            {DISINFO.map((d,i)=>{
-              const col=d.verdict==="FABRICATED"||d.verdict==="FALSE"?C.red:d.verdict==="MISLEADING"?C.orange:C.gold;
-              return(
-                <div key={i} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${col}`,borderRadius:3,padding:"8px 12px"}}>
-                  <div style={{display:"flex",gap:7,alignItems:"flex-start",marginBottom:3}}>
-                    <span style={{fontSize:8,color:col,minWidth:75,fontFamily:C.mono,fontWeight:"bold"}}>{d.verdict}</span>
-                    <span style={{fontSize:9,color:C.textDim,flex:1}}>{d.claim}</span>
-                    <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{d.conf}%</span>
-                  </div>
-                  <div style={{fontSize:9,color:C.textDim,lineHeight:"1.5",marginBottom:5}}>{d.detail}</div>
-                  <a href={d.srcUrl} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",fontFamily:C.mono}}>⊕ {d.src} ↗</a>
-                </div>
-              );
-            })}
+            {DISINFO.map((d,i)=>{const col=d.verdict==="FABRICATED"||d.verdict==="FALSE"?C.red:d.verdict==="MISLEADING"?C.orange:C.gold;return(<div key={i} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${col}`,borderRadius:3,padding:"8px 12px"}}><div style={{display:"flex",gap:7,alignItems:"flex-start",marginBottom:3}}><span style={{fontSize:8,color:col,minWidth:75,fontFamily:C.mono,fontWeight:"bold"}}>{d.verdict}</span><span style={{fontSize:9,color:C.textDim,flex:1}}>{d.claim}</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{d.conf}%</span></div><div style={{fontSize:9,color:C.textDim,lineHeight:"1.5",marginBottom:5}}>{d.detail}</div><a href={d.srcUrl} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",fontFamily:C.mono}}>⊕ {d.src} ↗</a></div>);})}
           </div>
         )}
 
-        {/* ── SOURCES ── */}
-        {tab==="sources"&&(
-          <div style={{display:"flex",flexDirection:"column",gap:5}}>
-            <div style={{fontSize:9,color:C.textDim,fontFamily:C.mono,marginBottom:5}}>{Object.keys(SOURCES).length} verified sources · click to visit</div>
-            {Object.values(SOURCES).map((s,i)=>{
-              const cc=s.credibility>=90?C.green:s.credibility>=75?C.gold:s.credibility>=55?C.orange:C.red;
-              return(
-                <a key={i} href={s.url} target="_blank" rel="noreferrer"
-                   style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${cc}`,borderRadius:3,padding:"8px 12px",textDecoration:"none"}}>
-                  <div>
-                    <div style={{fontSize:10,color:C.text,marginBottom:2}}>{s.name}</div>
-                    <div style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{s.type} · Bias: {s.bias}</div>
-                  </div>
-                  <div style={{textAlign:"right"}}>
-                    <div style={{fontSize:13,color:cc,fontWeight:"bold",fontFamily:C.mono}}>{s.credibility}%</div>
-                    <div style={{fontSize:8,color:C.textDim}}>↗ visit</div>
-                  </div>
-                </a>
-              );
-            })}
-          </div>
-        )}
-
+        {tab==="sources"&&(<div style={{display:"flex",flexDirection:"column",gap:5}}><div style={{fontSize:9,color:C.textDim,fontFamily:C.mono,marginBottom:5}}>{Object.keys(SOURCES).length} verified sources · click to visit</div>{Object.values(SOURCES).map((s,i)=>{const cc=s.credibility>=90?C.green:s.credibility>=75?C.gold:s.credibility>=55?C.orange:C.red;return(<a key={i} href={s.url} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${cc}`,borderRadius:3,padding:"8px 12px",textDecoration:"none"}}><div><div style={{fontSize:10,color:C.text,marginBottom:2}}>{s.name}</div><div style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{s.type} · Bias: {s.bias}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:13,color:cc,fontWeight:"bold",fontFamily:C.mono}}>{s.credibility}%</div><div style={{fontSize:8,color:C.textDim}}>↗ visit</div></div></a>);})}</div>)}
       </div>
     </div>
   );
@@ -1057,16 +903,19 @@ export default function GEOINTv10(){
   const [blink,setBlink]=useState(true);
   const [time,setTime]=useState(new Date());
   const [tickerItems,setTickerItems]=useState([...TICKER_ITEMS]);
+  const [tzOpen,setTzOpen]=useState(false);
+  const [timezone,setTimezone]=useState(TIMEZONES[1]);
+  const [aiOpen,setAiOpen]=useState(false);
+  const [chatOpen,setChatOpen]=useState(false);
   const usedTickers=useRef(new Set());
 
   useEffect(()=>{const t=setInterval(()=>setBlink(b=>!b),900);return()=>clearInterval(t);},[]);
   useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t);},[]);
   useEffect(()=>{
-    const h=e=>{if(e.key==="/"||((e.ctrlKey||e.metaKey)&&e.key==="k")){e.preventDefault();setSearch(true);}};
+    const h=e=>{if(e.key==="/"||((e.ctrlKey||e.metaKey)&&e.key==="k")){e.preventDefault();setSearch(true);} if(e.key==="Escape"){setAiOpen(false);setChatOpen(false);setTzOpen(false);}};
     window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);
   },[]);
 
-  /* Live ticker updates every 20 seconds */
   useEffect(()=>{
     const t=setInterval(()=>{
       const unused=LIVE_TICKER.filter(x=>!usedTickers.current.has(x));
@@ -1078,10 +927,16 @@ export default function GEOINTv10(){
     return()=>clearInterval(t);
   },[]);
 
-  /* Format date exactly as screenshot: "Thu, 12 Mar 2026, 15:00:22" */
   const fmtTime=()=>{
-    const d=time.toUTCString(); // "Thu, 12 Mar 2026 15:00:22 GMT"
-    return d.slice(0,3).toUpperCase()+", "+d.slice(5,11)+" "+d.slice(17,25);
+    const opts={weekday:"short",day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false,timeZone:timezone.zone};
+    const tstr=new Intl.DateTimeFormat("en-GB",opts).format(time).replace(',', '');
+    return `${tstr.toUpperCase()} ${timezone.id==="utc"?"UTC":timezone.zone?`(${timezone.label})`:"(LOCAL)"}`;
+  };
+
+  const floatingBtn={
+    width:34,height:34,borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center",
+    background:"rgba(8,12,18,0.95)",border:`1px solid ${C.border}`,color:C.text,cursor:"pointer",fontSize:16,
+    boxShadow:"0 2px 8px rgba(0,0,0,0.45)"
   };
 
   return(
@@ -1089,11 +944,11 @@ export default function GEOINTv10(){
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@700;900&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-        html,body,#root{height:100%;overflow:hidden;background:#0b0f1a;}
+        html,body,#root{height:100%;overflow:hidden;background:#020305;}
         ::-webkit-scrollbar{width:4px;height:4px;}
-        ::-webkit-scrollbar-track{background:#0b0f1a;}
-        ::-webkit-scrollbar-thumb{background:#1c2840;border-radius:2px;}
-        input::placeholder{color:#4a6882;}
+        ::-webkit-scrollbar-track{background:#020305;}
+        ::-webkit-scrollbar-thumb{background:#1b232f;border-radius:2px;}
+        input::placeholder{color:#60748d;}
         button:focus{outline:none;}
         a:hover{opacity:0.8;}
       `}</style>
@@ -1101,58 +956,41 @@ export default function GEOINTv10(){
       {searchOpen&&<GlobalSearch onClose={()=>setSearch(false)}/>}
 
       <div style={{height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden",background:C.bg,fontFamily:C.mono}}>
-
-        {/* ── HEADER — pixel-perfect to screenshot ── */}
-        <header style={{background:"#070b15",borderBottom:`1px solid ${C.border}`,height:46,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 20px",flexShrink:0}}>
-          {/* Left: GEOINT v6 OPEN SOURCE INTELLIGENCE */}
+        <header style={{background:"#04070b",borderBottom:`1px solid ${C.border}`,height:46,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 20px",flexShrink:0,position:"relative"}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <div style={{fontFamily:C.head,fontSize:20,fontWeight:900,letterSpacing:5,color:"#fff"}}>
-              GEO<span style={{color:C.cyan}}>INT</span>
-            </div>
+            <div style={{fontFamily:C.head,fontSize:20,fontWeight:900,letterSpacing:5,color:"#fff"}}>GEO<span style={{color:C.cyan}}>INT</span></div>
             <span style={{fontSize:10,color:C.cyan,border:`1px solid ${C.cyan}44`,padding:"2px 8px",borderRadius:2,fontFamily:C.mono}}>v6</span>
             <span style={{fontSize:9,color:C.textDim,letterSpacing:2.5,fontFamily:C.mono}}>OPEN SOURCE INTELLIGENCE</span>
           </div>
-          {/* Right: SEARCH ⌘K · status dots SEVERE · clock */}
-          <div style={{display:"flex",alignItems:"center",gap:18}}>
-            <button onClick={()=>setSearch(true)}
-              style={{display:"flex",alignItems:"center",gap:7,background:"rgba(255,255,255,0.03)",border:`1px solid ${C.border}`,color:C.textDim,padding:"5px 13px",borderRadius:3,fontSize:10,cursor:"pointer",fontFamily:C.mono}}>
-              <span style={{fontSize:14}}>⌕</span>SEARCH<span style={{fontSize:8,opacity:0.45,marginLeft:2}}>⌘K</span>
-            </button>
-            <div style={{display:"flex",gap:4,alignItems:"center"}}>
-              {[C.green,"#26c970",C.gold,C.orange,C.red].map((c,i)=>(
-                <div key={i} style={{width:12,height:12,borderRadius:"50%",background:c,opacity:i===4&&!blink?0.35:1,transition:"opacity 0.2s"}}/>
-              ))}
-              <span style={{color:C.red,fontSize:10,letterSpacing:2,fontFamily:C.mono,marginLeft:5,fontWeight:"bold"}}>SEVERE</span>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <button onClick={()=>setSearch(true)} style={{display:"flex",alignItems:"center",gap:7,background:"rgba(255,255,255,0.03)",border:`1px solid ${C.border}`,color:C.textDim,padding:"5px 13px",borderRadius:3,fontSize:10,cursor:"pointer",fontFamily:C.mono}}><span style={{fontSize:14}}>⌕</span>SEARCH<span style={{fontSize:8,opacity:0.45,marginLeft:2}}>⌘K</span></button>
+            <div style={{display:"flex",gap:4,alignItems:"center"}}>{[C.green,"#26c970",C.gold,C.orange,C.red].map((c,i)=><div key={i} style={{width:12,height:12,borderRadius:"50%",background:c,opacity:i===4&&!blink?0.35:1,transition:"opacity 0.2s"}}/>)}<span style={{color:C.red,fontSize:10,letterSpacing:2,fontFamily:C.mono,marginLeft:5,fontWeight:"bold"}}>SEVERE</span></div>
+            <div style={{position:"relative"}}>
+              <button onClick={()=>setTzOpen(v=>!v)} style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${C.border}`,color:C.textDim,padding:"5px 9px",borderRadius:3,fontSize:9,fontFamily:C.mono,cursor:"pointer"}}>TZ: {timezone.label}</button>
+              {tzOpen&&<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",zIndex:40,background:C.panel,border:`1px solid ${C.border}`,borderRadius:3,minWidth:150,overflow:"hidden"}}>{TIMEZONES.map(t=><button key={t.id} onClick={()=>{setTimezone(t);setTzOpen(false);}} style={{display:"block",width:"100%",textAlign:"left",padding:"7px 9px",background:timezone.id===t.id?`${C.cyan}14`:"none",border:"none",borderBottom:`1px solid ${C.border}`,color:timezone.id===t.id?C.cyan:C.textDim,fontSize:9,fontFamily:C.mono,cursor:"pointer"}}>{t.label}</button>)}</div>}
             </div>
             <span style={{color:C.textDim,fontSize:10,fontFamily:C.mono}}>{fmtTime()}</span>
           </div>
         </header>
 
-        {/* ── TICKER ── */}
         <Ticker items={tickerItems}/>
 
-        {/* ── MAIN: 5fr left / 7fr right — exactly as screenshot ── */}
-        <main style={{flex:1,display:"grid",gridTemplateColumns:"5fr 7fr",overflow:"hidden",minHeight:0}}>
-
-          {/* LEFT COLUMN */}
-          <div style={{borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-
-            {/* Map: fills top portion — no padding around edges, map goes to borders */}
-            <div style={{height:"48%",flexShrink:0,borderBottom:`1px solid ${C.border}`}}>
-              <MapView selected={selected} setSelected={setSelected}/>
+        <main style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
+          <div style={{height:"56%",minHeight:320,borderBottom:`1px solid ${C.border}`,position:"relative"}}>
+            <MapView selected={selected} setSelected={setSelected}/>
+            <div style={{position:"absolute",right:12,bottom:92,zIndex:500,display:"flex",flexDirection:"column",gap:8}}>
+              <button onClick={()=>setAiOpen(v=>!v)} style={floatingBtn} title="AI Analysis">🧠</button>
+              <button onClick={()=>setChatOpen(v=>!v)} style={floatingBtn} title="Live Chat">💬</button>
             </div>
 
-            {/* AI Analysis: fills remaining space below map */}
-            <div style={{flex:1,padding:"10px 14px 12px",overflowY:"auto",minHeight:0}}>
-              <AIPanel/>
-            </div>
+            {aiOpen&&<div style={{position:"absolute",top:12,right:58,width:390,maxWidth:"40vw",height:"76%",zIndex:520,background:"rgba(5,8,13,0.96)",border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px",boxShadow:"0 10px 30px rgba(0,0,0,0.45)",display:"flex",flexDirection:"column"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><span style={{fontSize:10,color:C.cyan,letterSpacing:2,fontFamily:C.mono}}>AI ANALYSIS PANEL</span><button onClick={()=>setAiOpen(false)} style={{background:"none",border:`1px solid ${C.border}`,color:C.textDim,padding:"2px 8px",borderRadius:2,cursor:"pointer"}}>✕</button></div><div style={{flex:1,minHeight:0,overflow:"hidden"}}><AIPanel/></div></div>}
+
+            {chatOpen&&<div style={{position:"absolute",top:12,right:58,width:430,maxWidth:"45vw",height:"76%",zIndex:520,background:"rgba(5,8,13,0.96)",border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px",boxShadow:"0 10px 30px rgba(0,0,0,0.45)"}}><ChatRoom compact onClose={()=>setChatOpen(false)}/></div>}
           </div>
 
-          {/* RIGHT COLUMN */}
-          <div style={{display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
+          <div style={{flex:1,minHeight:0,overflow:"hidden"}}>
             <RightPanel/>
           </div>
-
         </main>
       </div>
     </>
