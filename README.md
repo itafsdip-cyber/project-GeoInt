@@ -7,13 +7,19 @@
 - ✅ Use `geoint/` for all new feature work, bug fixes, and validation.
 - ⚠️ The root-level app scaffold is a legacy/duplicate structure and should **not** be used for new development.
 
+## Legacy Archive Reference
+
+- `docs/legacy/geopolitical-dashboard-v7-legacy.jsx` is an **archived legacy reference only**.
+- It was moved from `geopolitical-dashboard.jsx` in the repository root.
+- It is **not** part of the active `geoint/` application build or runtime.
+
 ## Project Structure
 
 - `geoint/`  
   Active Vite + React app used for ongoing development and runtime validation.
 
-- `/` (repository root app files such as `src/`, `index.html`, `vite.config.ts`, `package.json`)  
-  Legacy duplicate scaffold retained temporarily for cleanup/migration safety.
+- `docs/legacy/`  
+  Archived legacy references kept for historical/context purposes only.
 
 ## Working Rule
 

@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 
+/* ARCHIVED LEGACY REFERENCE: moved from repository root; not used by the active geoint/ app build/runtime. */
+
 /* ═══════════════════════════════════════════════════════════════
    GEOINT v7  –  matches the reference screenshot exactly
    Left col (5/12):  Real Leaflet map  +  AI Analysis Panel
