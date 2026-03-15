@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { DATA_MODE } from "./services/data/normalizedEventModel";
+import { useGeoFeed, useFilteredGeoFeed } from "./services/data/liveDataService";
 
 /* ═══════════════════════════════════════════════════════════════════
    GEOINT v10 — pixel-perfect UI match to reference screenshot
@@ -34,19 +36,6 @@ const TIME_RANGES = [
   { id: "7d", label: "7D", hours: 24 * 7 },
 ];
 
-const DEMO_CLOCK_UTC = new Date("2026-03-10T04:30:00.000Z");
-
-const withDemoTimestamps = (items, spacingHours = 1.5, startOffsetHours = 0) =>
-  items.map((item, index) => ({
-    ...item,
-    occurredAt: new Date(DEMO_CLOCK_UTC.getTime() - ((startOffsetHours + index * spacingHours) * 3600000)).toISOString(),
-    dataMode: "demo",
-  }));
-
-const filterByTimeRange = (items, rangeHours) => {
-  const cutoff = DEMO_CLOCK_UTC.getTime() - rangeHours * 3600000;
-  return items.filter((item) => new Date(item.occurredAt).getTime() >= cutoff);
-};
 
 /* ─── DATA ─────────────────────────────────────────────────────── */
 const SOURCES = {
@@ -175,21 +164,6 @@ const SEED_CHAT = [
 ];
 
 /* ─── LIVE SIMULATION ENGINE ───────────────────────────────────── */
-const LIVE_ALERTS = [
-  {sev:"CRITICAL",loc:"Dubai Airspace",   verified:true, title:"Drone swarm detected — 6 UAVs inbound from north",             detail:"Radar contact at 40km. SHORAD systems activated. Intercept in progress.",          source:"UAE NCEMA",    sourceUrl:"https://ncema.gov.ae",  srcKey:"UAE NCEMA"},
-  {sev:"HIGH",    loc:"Hormuz Strait",    verified:true, title:"4th tanker halted by IRGCN in Hormuz — Lloyd's issues warning", detail:"MV Pacific Teal, Liberian flag. IRGCN frigate 200m alongside. Engine stopped.",    source:"UKMTO",        sourceUrl:"https://ukmto.org",     srcKey:"UKMTO"},
-  {sev:"CRITICAL",loc:"Abu Dhabi",        verified:true, title:"Patriot PAC-3 intercept — 2 ballistic missiles destroyed",      detail:"Wave 22 confirmed. Missiles launched from western Iran. Debris over Gulf.",        source:"UAE Ministry of Defence", sourceUrl:"https://mod.gov.ae", srcKey:"UAE MoD"},
-  {sev:"HIGH",    loc:"Tel Aviv",         verified:true, title:"Arrow-3 activated — hypersonic threat detected inbound",        detail:"Fattah-2 class. Arrow-3 engaged at exo-atmospheric altitude. Outcome TBC.",       source:"IDF",          sourceUrl:"https://idf.il",        srcKey:"IDF"},
-  {sev:"MEDIUM",  loc:"Riyadh",          verified:false,title:"Unconfirmed: explosion heard near ARAMCO facility",             detail:"Social media reports only. Saudi SPA has not confirmed. Monitoring.",            source:"IRNA (unverified)", sourceUrl:"https://irna.ir",   srcKey:"IRNA"},
-  {sev:"HIGH",    loc:"Persian Gulf",     verified:true, title:"USS Dwight Eisenhower repositions — now 60nm from Iran coast",  detail:"Carrier strike group move confirmed by Pentagon. F/A-18s on combat air patrol.", source:"US DoD",        sourceUrl:"https://defense.gov",   srcKey:"US DoD"},
-  {sev:"CRITICAL",loc:"Hormuz Strait",   verified:true, title:"Hormuz fully blocked — Iran lays additional mines",             detail:"USN EOD teams deployed. 23 vessels queued. Oil futures +8% in after-hours.",     source:"CENTCOM",      sourceUrl:"https://centcom.mil",   srcKey:"CENTCOM"},
-  {sev:"HIGH",    loc:"Beirut",          verified:true, title:"Hezbollah fires 40 rockets into northern Israel",              detail:"Iron Dome intercepts 34. 6 impacted open areas Galilee. No casualties reported.", source:"IDF",          sourceUrl:"https://idf.il",        srcKey:"IDF"},
-  {sev:"MEDIUM",  loc:"Oman",            verified:true, title:"Oman FM departs Muscat for Washington — ceasefire talks",      detail:"Third party mediation confirmed. Iran envoy also en route. Swiss channel active.",source:"Reuters",      sourceUrl:"https://reuters.com",   srcKey:"Reuters"},
-  {sev:"HIGH",    loc:"Red Sea",         verified:true, title:"Houthi anti-ship missile fired at US destroyer",               detail:"USS Gravely activated CIWS. SM-2 intercept confirmed. No damage.",               source:"CENTCOM",      sourceUrl:"https://centcom.mil",   srcKey:"CENTCOM"},
-  {sev:"CRITICAL",loc:"Tehran",          verified:false,title:"Reports of secondary explosions inside Iran — source unclear", detail:"Unverified. 3 Telegram channels reporting. No satellite confirmation yet.",       source:"IRNA (unverified)", sourceUrl:"https://irna.ir",   srcKey:"IRNA"},
-  {sev:"HIGH",    loc:"Bahrain",         verified:true, title:"5th Fleet on highest alert — all leave cancelled",             detail:"USS Ford + USS Eisenhower both in Gulf. 14,000 sailors now in theatre.",          source:"US DoD",        sourceUrl:"https://defense.gov",   srcKey:"US DoD"},
-];
-
 const LIVE_CHAT_MSGS = [
   {user:"GulfAnalyst",  role:"analyst",msg:"Wave 22 just confirmed by UAE MoD. Patriot caught both. The saturation strategy isn't working as well as Iran hoped."},
   {user:"MaritimeWatch",role:"analyst",msg:"4th tanker now blocked at Hormuz. Lloyd's war risk premium just hit 8% — that's the highest since the Iran-Iraq war in 1984."},
@@ -218,8 +192,6 @@ const LIVE_TICKER = [
   "Pentagon: 14,000 sailors now in Gulf theatre — Source: US DoD",
 ];
 
-let liveIdCounter = 100;
-const getLiveId = () => ++liveIdCounter;
 const nowUTC = () => new Date().toUTCString().slice(17,22) + " UTC";
 
 /* ─── HELPERS ──────────────────────────────────────────────────── */
@@ -269,7 +241,7 @@ function Ticker({items}){
 }
 
 /* ─── MAP VIEW — Leaflet + Canvas trajectory overlay ───────────── */
-function MapView({selected,setSelected,timeRangeHours}){
+function MapView({selected,setSelected,visibleTrajectories}){
   const mapRef    = useRef(null);
   const leafRef   = useRef(null);
   const canvasRef = useRef(null);
@@ -278,7 +250,6 @@ function MapView({selected,setSelected,timeRangeHours}){
   const [selTraj,setSelTraj] = useState(null);
   const showRef   = useRef(true);
   const filterRef = useRef("ALL");
-  const visibleTrajectories = useMemo(() => filterByTimeRange(withDemoTimestamps(TRAJECTORIES, 0.8, 0.4), timeRangeHours), [timeRangeHours]);
 
   useEffect(()=>{
     if(leafRef.current) return;
@@ -669,7 +640,7 @@ function ChatRoom({compact=false, onClose}){
 }
 
 /* ─── RIGHT PANEL ──────────────────────────────────────────────── */
-function RightPanel({timeRange,setTimeRange}){
+function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed}){
   const [tab,setTab]=useState("monitor");
   const [evFilter,setEvFilter]=useState("ALL");
   const [expanded,setExpanded]=useState(null);
@@ -677,28 +648,14 @@ function RightPanel({timeRange,setTimeRange}){
   const [dInp,setDInp]=useState("");
   const [dRes,setDRes]=useState(null);
   const [dLoad,setDLoad]=useState(false);
+  const tabRowRef = useRef(null);
 
-  const [liveAlerts,setLiveAlerts]   = useState([...ALERTS]);
   const [missiles,setMissiles]       = useState(189);
   const [drones,setDrones]           = useState(876);
   const [sites,setSites]             = useState(5);
   const [wave,setWave]               = useState(21);
-  const [newAlert,setNewAlert]       = useState(null);
-  const usedAlerts  = useRef(new Set());
 
   useEffect(()=>{
-    const alertTimer=setInterval(()=>{
-      const unused=LIVE_ALERTS.filter((_,i)=>!usedAlerts.current.has(i));
-      if(unused.length===0){usedAlerts.current.clear();return;}
-      const idx=LIVE_ALERTS.indexOf(unused[Math.floor(Math.random()*unused.length)]);
-      usedAlerts.current.add(idx);
-      const a=LIVE_ALERTS[idx];
-      const fresh={...a,id:getLiveId(),time:nowUTC(),_new:true};
-      setNewAlert(fresh.id);
-      setLiveAlerts(prev=>[fresh,...prev].slice(0,14));
-      setTimeout(()=>setNewAlert(null),4000);
-    }, 28000 + Math.random()*12000);
-
     const counterTimer=setInterval(()=>{
       const r=Math.random();
       if(r<0.45)      setMissiles(m=>m+Math.floor(Math.random()*3+1));
@@ -707,7 +664,22 @@ function RightPanel({timeRange,setTimeRange}){
       else            setSites(s=>s+(Math.random()<0.1?1:0));
     }, 10000);
 
-    return()=>{clearInterval(alertTimer);clearInterval(counterTimer);};
+    return()=>{clearInterval(counterTimer);};
+  },[]);
+
+  useEffect(()=>{
+    const bindHorizontalWheel=(el)=>{
+      if(!el) return ()=>{};
+      const onWheel=(event)=>{
+        if(Math.abs(event.deltaY)<=Math.abs(event.deltaX)) return;
+        event.preventDefault();
+        el.scrollLeft += event.deltaY;
+      };
+      el.addEventListener("wheel", onWheel, { passive:false });
+      return ()=>el.removeEventListener("wheel", onWheel);
+    };
+    const offTab = bindHorizontalWheel(tabRowRef.current);
+    return ()=>{ offTab(); };
   },[]);
 
   const TABS=[
@@ -744,10 +716,10 @@ function RightPanel({timeRange,setTimeRange}){
 
   const IC={PROXY:C.orange,ALLIANCE:C.green,SECURITY:C.green,FINANCIAL:C.gold,LEVERAGE:C.red,ECONOMIC:C.cyan,MILITARY:C.orange};
 
-  const alertsData = useMemo(() => withDemoTimestamps(liveAlerts, 1.2, 0.2), [liveAlerts]);
-  const filteredAlerts = useMemo(() => filterByTimeRange(alertsData, timeRange.hours), [alertsData, timeRange]);
-  const eventsData = useMemo(() => withDemoTimestamps(EVENTS, 2.1, 0.1), []);
-  const filteredEvents = useMemo(() => filterByTimeRange(eventsData, timeRange.hours), [eventsData, timeRange]);
+  const filteredAlerts = feed.alerts || [];
+  const filteredEvents = feed.events || [];
+  const filteredTimeline = feed.timeline || [];
+  const sourceFeed = feed.sources || [];
 
   return(
     <div style={{display:"flex",flexDirection:"column",gap:10,padding:"10px 12px",overflow:"hidden",minHeight:0}}>
@@ -762,35 +734,35 @@ function RightPanel({timeRange,setTimeRange}){
         ))}
       </div>
 
-      <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,flexShrink:0,overflowX:"auto",scrollbarWidth:"thin",paddingBottom:2,gap:2}}>
+      <div ref={tabRowRef} style={{display:"flex",borderBottom:`1px solid ${C.border}`,flexShrink:0,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"thin",padding:"0 2px 3px",gap:4,WebkitOverflowScrolling:"touch"}}>
         {TABS.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{background:"none",border:"none",borderBottom:tab===t.id?`2px solid ${C.cyan}`:"2px solid transparent",color:tab===t.id?C.cyan:C.textDim,padding:"8px 11px",fontFamily:C.mono,fontSize:9,letterSpacing:0.5,cursor:"pointer",whiteSpace:"nowrap"}}>{t.l}</button>
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{background:tab===t.id?`${C.cyan}14`:"rgba(255,255,255,0.02)",border:`1px solid ${tab===t.id?`${C.cyan}66`:C.border}`,color:tab===t.id?C.cyan:C.textDim,padding:"7px 11px",borderRadius:3,fontFamily:C.mono,fontSize:9,letterSpacing:0.5,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto"}}>{t.l}</button>
         ))}
       </div>
 
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}><div style={{display:"flex",gap:6,alignItems:"center",overflowX:"auto",paddingBottom:2}}><span style={{fontSize:8,color:C.textDim,letterSpacing:1,fontFamily:C.mono}}>RANGE</span>{TIME_RANGES.map((r)=><button key={r.id} onClick={()=>setTimeRange(r)} style={{background:timeRange.id===r.id?`${C.cyan}22`:"rgba(255,255,255,0.02)",border:`1px solid ${timeRange.id===r.id?C.cyan:C.border}`,color:timeRange.id===r.id?C.cyan:C.textDim,padding:"4px 9px",fontSize:8,borderRadius:3,cursor:"pointer",fontFamily:C.mono}}>{r.label}</button>)}</div><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>DATA MODE: DEMO SNAPSHOT · LIVE-READY ADAPTER</span></div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}><div style={{display:"flex",gap:6,alignItems:"center",overflowX:"auto",paddingBottom:2}}><span style={{fontSize:8,color:C.textDim,letterSpacing:1,fontFamily:C.mono}}>RANGE</span>{TIME_RANGES.map((r)=><button key={r.id} onClick={()=>setTimeRange(r)} style={{background:timeRange.id===r.id?`${C.cyan}22`:"rgba(255,255,255,0.02)",border:`1px solid ${timeRange.id===r.id?C.cyan:C.border}`,color:timeRange.id===r.id?C.cyan:C.textDim,padding:"4px 9px",fontSize:8,borderRadius:3,cursor:"pointer",fontFamily:C.mono}}>{r.label}</button>)}</div><span style={{fontSize:8,color:dataMode===DATA_MODE.LIVE?C.green:dataMode===DATA_MODE.LIVE_UNAVAILABLE?C.orange:C.textDim,fontFamily:C.mono}}>DATA MODE: {dataMode}{statusNote ? ` · ${statusNote}` : ""}</span></div>
 
       <div style={{flex:1,overflow:"auto",minHeight:0,paddingRight:4,border:`1px solid ${C.border}`,borderRadius:4,padding:"8px 8px 8px 4px",background:"rgba(5,9,15,0.45)"}}>
         {tab==="monitor"&&(
           <div style={{display:"flex",flexDirection:"column",gap:9}}>
             {filteredAlerts.length===0&&<div style={{padding:"12px",fontSize:9,color:C.textDim,fontFamily:C.mono}}>No monitor alerts in selected range.</div>}
             {filteredAlerts.map(a=>{
-              const col=sevColor(a.sev);
-              const isNew=a.id===newAlert;
+              const col=sevColor(a.severity);
+              const isNew=false;
               return(
                 <div key={a.id} style={{background:isNew?`${col}12`:C.panel,border:`1px solid ${isNew?col:C.border}`,borderLeft:`3px solid ${col}`,borderRadius:3,padding:"10px 15px",transition:"all 0.5s"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
                     <div style={{display:"flex",gap:7,alignItems:"center"}}>
-                      <span style={{fontSize:9,color:C.textDim,fontFamily:C.mono}}>{a.time}</span>
-                      <span style={{fontSize:8,color:col,background:`${col}22`,padding:"1px 7px",borderRadius:2,fontFamily:C.mono,fontWeight:"bold",letterSpacing:1}}>{a.sev}</span>
+                      <span style={{fontSize:9,color:C.textDim,fontFamily:C.mono}}>{new Date(a.timestamp).toISOString().slice(11,16)} UTC</span>
+                      <span style={{fontSize:8,color:col,background:`${col}22`,padding:"1px 7px",borderRadius:2,fontFamily:C.mono,fontWeight:"bold",letterSpacing:1}}>{String(a.severity).toUpperCase()}</span>
                       {isNew&&<span style={{fontSize:7,color:col,fontFamily:C.mono,letterSpacing:1}}>● NEW</span>}
-                      {a.verified ? <span style={{fontSize:8,color:C.green,fontFamily:C.mono}}>✓ VERIFIED</span> : <span style={{fontSize:8,color:C.gold,fontFamily:C.mono}}>⚡ UNCONFIRMED</span>}
+                      {a.verificationStatus==="verified" ? <span style={{fontSize:8,color:C.green,fontFamily:C.mono}}>✓ VERIFIED</span> : <span style={{fontSize:8,color:C.gold,fontFamily:C.mono}}>⚡ UNCONFIRMED</span>}
                     </div>
-                    <span style={{fontSize:9,color:C.textDim,fontFamily:C.mono}}>{a.loc}</span>
+                    <span style={{fontSize:9,color:C.textDim,fontFamily:C.mono}}>{a.region}</span>
                   </div>
                   <div style={{fontSize:12,color:C.text,lineHeight:"1.45",marginBottom:5,fontWeight:500,fontFamily:C.mono}}>{a.title}</div>
-                  <div style={{fontSize:9,color:C.textDim,lineHeight:"1.55",marginBottom:7}}>{a.detail}</div>
-                  <a href={a.sourceUrl} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",fontFamily:C.mono}}>⊕ {a.source} ↗</a>
+                  <div style={{fontSize:9,color:C.textDim,lineHeight:"1.55",marginBottom:7}}>{a.metadata.detail}</div>
+                  <a href={a.metadata.sourceUrl} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",fontFamily:C.mono}}>⊕ {a.source} ↗</a>
                 </div>
               );
             })}
@@ -802,20 +774,21 @@ function RightPanel({timeRange,setTimeRange}){
             <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4}}>
               {ET.map(t=>(<button key={t} onClick={()=>setEvFilter(t)} style={{background:evFilter===t?`${C.cyan}18`:"none",border:`1px solid ${evFilter===t?C.cyan:C.border}`,color:evFilter===t?C.cyan:C.textDim,padding:"3px 8px",fontSize:8,borderRadius:2,cursor:"pointer",fontFamily:C.mono}}>{t}</button>))}
             </div>
-            {((evFilter==="ALL"?filteredEvents:filteredEvents.filter(e=>e.type===evFilter)).length===0)&&<div style={{padding:"12px",fontSize:9,color:C.textDim,fontFamily:C.mono}}>No events in selected range/filter.</div>}
-            {(evFilter==="ALL"?filteredEvents:filteredEvents.filter(e=>e.type===evFilter)).map(e=>{
+            {((evFilter==="ALL"?filteredEvents:filteredEvents.filter(e=>(e.metadata.type||e.type)===evFilter)).length===0)&&<div style={{padding:"12px",fontSize:9,color:C.textDim,fontFamily:C.mono}}>No events in selected range/filter.</div>}
+            {(evFilter==="ALL"?filteredEvents:filteredEvents.filter(e=>(e.metadata.type||e.type)===evFilter)).map(e=>{
               const isEx=expanded===e.id;
-              const ec=typeC[e.type]||C.cyan;
+              const eventType=e.metadata.type||e.type;
+              const ec=typeC[eventType]||C.cyan;
               return(<div key={e.id} onClick={()=>setExpanded(isEx?null:e.id)} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`3px solid ${ec}`,borderRadius:3,padding:"10px 14px",cursor:"pointer"}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.time} · {e.date}</span><span style={{fontSize:8,color:ec,background:`${ec}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{e.type}</span>{e.verified?<span style={{fontSize:8,color:C.green}}>✓</span>:<span style={{fontSize:8,color:C.gold}}>⚡</span>}</div><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.region}</span></div>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{new Date(e.timestamp).toISOString().slice(11,16)} UTC</span><span style={{fontSize:8,color:ec,background:`${ec}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{eventType}</span>{e.verificationStatus==="verified"?<span style={{fontSize:8,color:C.green}}>✓</span>:<span style={{fontSize:8,color:C.gold}}>⚡</span>}</div><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.region}</span></div>
                 <div style={{fontSize:11.5,color:C.text,lineHeight:"1.4",marginBottom:isEx?6:0,fontFamily:C.mono}}>{e.title}</div>
-                {isEx&&<><div style={{fontSize:9,color:C.textDim,lineHeight:"1.6",marginBottom:7}}>{e.detail}</div><div style={{display:"flex",flexWrap:"wrap",gap:3}}>{e.sources.map((x,i)=><SrcLink key={i} srcKey={x.key} url={x.url} compact/>)}</div></>}
+                {isEx&&<><div style={{fontSize:9,color:C.textDim,lineHeight:"1.6",marginBottom:7}}>{e.metadata.detail}</div><div style={{display:"flex",flexWrap:"wrap",gap:3}}>{e.metadata.sources?.map((x,i)=><SrcLink key={i} srcKey={x.key} url={x.url} compact/>)}</div></>}
               </div>);
             })}
           </div>
         )}
 
-        {tab==="timeline"&&(<div style={{position:"relative",paddingLeft:22}}><div style={{position:"absolute",left:9,top:0,bottom:0,width:1,background:`linear-gradient(180deg,transparent,${C.cyan}55,transparent)`}}/>{TIMELINE.map((t,i)=>{const col=typeC[t.type]||C.cyan;return(<div key={i} style={{position:"relative",paddingBottom:16}}><div style={{position:"absolute",left:-15,top:5,width:8,height:8,borderRadius:"50%",background:col,border:`2px solid ${C.bg}`}}/><div style={{fontSize:8,color:C.cyan,fontFamily:C.mono,marginBottom:2}}>{t.date}</div><div style={{fontSize:10.5,color:C.text,lineHeight:"1.5",marginBottom:5}}>{t.event}</div><div style={{display:"flex",gap:6,alignItems:"center"}}><span style={{fontSize:7,color:col,background:`${col}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{t.type}</span><a href={t.srcUrl} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",fontFamily:C.mono}}>⊕ {t.src} ↗</a></div></div>);})}</div>)}
+        {tab==="timeline"&&(<div style={{position:"relative",paddingLeft:22}}><div style={{position:"absolute",left:9,top:0,bottom:0,width:1,background:`linear-gradient(180deg,transparent,${C.cyan}55,transparent)`}}/>{filteredTimeline.map((entry,i)=>{const t=entry.metadata;const col=typeC[t.type]||C.cyan;return(<div key={entry.id||i} style={{position:"relative",paddingBottom:16}}><div style={{position:"absolute",left:-15,top:5,width:8,height:8,borderRadius:"50%",background:col,border:`2px solid ${C.bg}`}}/><div style={{fontSize:8,color:C.cyan,fontFamily:C.mono,marginBottom:2}}>{t.date}</div><div style={{fontSize:10.5,color:C.text,lineHeight:"1.5",marginBottom:5}}>{entry.title}</div><div style={{display:"flex",gap:6,alignItems:"center"}}><span style={{fontSize:7,color:col,background:`${col}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{t.type}</span><a href={t.srcUrl} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",fontFamily:C.mono}}>⊕ {entry.source} ↗</a></div></div>);})}</div>)}
 
         {tab==="influence"&&(<div style={{display:"flex",flexDirection:"column",gap:5}}>{INFLUENCES.map((inf,i)=>{const col=IC[inf.type]||C.cyan;return(<div key={i} onClick={()=>setInfExp(infExp===i?null:i)} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${col}`,borderRadius:3,padding:"8px 12px",cursor:"pointer"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}><div style={{display:"flex",gap:7,alignItems:"center",minWidth:0}}><span style={{fontSize:10,color:C.text,whiteSpace:"nowrap"}}>{inf.from}</span><span style={{fontSize:10,color:col}}>→</span><span style={{fontSize:10,color:C.text,whiteSpace:"nowrap"}}>{inf.to}</span></div><span style={{fontSize:8,color:col,background:`${col}18`,padding:"2px 7px",borderRadius:2,fontFamily:C.mono}}>{inf.type}</span><span style={{fontSize:9,color:col,fontFamily:C.mono,minWidth:26}}>{inf.str}%</span></div>{infExp===i&&<div style={{marginTop:8}}><div style={{fontSize:9,color:C.textDim,lineHeight:"1.65",marginBottom:6}}>{inf.note}</div><SrcLink srcKey={inf.src} url={inf.srcUrl}/></div>}</div>);})}</div>)}
 
@@ -831,7 +804,7 @@ function RightPanel({timeRange,setTimeRange}){
           </div>
         )}
 
-        {tab==="sources"&&(<div style={{display:"flex",flexDirection:"column",gap:5}}><div style={{fontSize:9,color:C.textDim,fontFamily:C.mono,marginBottom:5}}>{Object.keys(SOURCES).length} verified sources · click to visit</div>{Object.values(SOURCES).map((s,i)=>{const cc=s.credibility>=90?C.green:s.credibility>=75?C.gold:s.credibility>=55?C.orange:C.red;return(<a key={i} href={s.url} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${cc}`,borderRadius:3,padding:"8px 12px",textDecoration:"none"}}><div><div style={{fontSize:10,color:C.text,marginBottom:2}}>{s.name}</div><div style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{s.type} · Bias: {s.bias}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:13,color:cc,fontWeight:"bold",fontFamily:C.mono}}>{s.credibility}%</div><div style={{fontSize:8,color:C.textDim}}>↗ visit</div></div></a>);})}</div>)}
+        {tab==="sources"&&(<div style={{display:"flex",flexDirection:"column",gap:5}}><div style={{fontSize:9,color:C.textDim,fontFamily:C.mono,marginBottom:5}}>{Object.keys(SOURCES).length} verified sources · click to visit</div>{sourceFeed.map((entry,i)=>{const s=entry.metadata;const cc=s.credibility>=90?C.green:s.credibility>=75?C.gold:s.credibility>=55?C.orange:C.red;return(<a key={entry.id||i} href={s.url} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${cc}`,borderRadius:3,padding:"8px 12px",textDecoration:"none"}}><div><div style={{fontSize:10,color:C.text,marginBottom:2}}>{s.name}</div><div style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{s.type} · Bias: {s.bias}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:13,color:cc,fontWeight:"bold",fontFamily:C.mono}}>{s.credibility}%</div><div style={{fontSize:8,color:C.textDim}}>↗ visit</div></div></a>);})}</div>)}
       </div>
     </div>
   );
@@ -930,8 +903,8 @@ function GlobalSearch({onClose}){
 
 
 function ControlIcon({type}){
-  if(type==="ai") return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9.5 3.5h5"/><path d="M12 3.5v3"/><rect x="6" y="8" width="12" height="9" rx="2"/><path d="M9 11.5h.01M15 11.5h.01"/><path d="M8.5 15h7"/></svg>;
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 5h16v11H7l-3 3V5z"/><path d="M8 9h8M8 12h5"/></svg>;
+  if(type==="ai") return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="7" width="14" height="10" rx="2"/><path d="M9 12h.01M15 12h.01"/><path d="M9 15h6"/><path d="M12 3v3"/><path d="M8.5 4.5h7"/></svg>;
+  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8"/><path d="M8 13h6"/></svg>;
 }
 
 function DraggablePanel({children,title,onClose,boundsRef,initialPosition,zIndex,width,maxWidth,height}){
@@ -984,6 +957,10 @@ export default function GEOINTv10(){
   const mapShellRef=useRef(null);
   const usedTickers=useRef(new Set());
 
+  const demoInput = useMemo(() => ({ alerts: ALERTS, events: EVENTS, timeline: TIMELINE, trajectories: TRAJECTORIES, sources: SOURCES }), []);
+  const { mode: dataMode, statusNote, feed } = useGeoFeed({ demoInput, refreshMs: 45000 });
+  const filteredFeed = useFilteredGeoFeed({ feed, timeRangeHours: timeRange.hours });
+
   useEffect(()=>{const t=setInterval(()=>setBlink(b=>!b),900);return()=>clearInterval(t);},[]);
   useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t);},[]);
   useEffect(()=>{
@@ -1010,8 +987,8 @@ export default function GEOINTv10(){
 
   const floatingBtn={
     width:34,height:34,borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center",
-    background:"linear-gradient(180deg, rgba(11,16,25,0.98), rgba(7,11,18,0.96))",border:`1px solid ${C.border}`,color:C.cyan,cursor:"pointer",fontSize:13,
-    boxShadow:"0 4px 14px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(0,229,200,0.12)",transition:"all .15s ease"
+    background:"linear-gradient(180deg, rgba(14,23,32,0.98), rgba(8,15,24,0.96))",border:`1px solid ${C.border}`,color:"#7df9ec",cursor:"pointer",fontSize:13,
+    boxShadow:"0 0 0 1px rgba(0,229,200,0.18) inset, 0 6px 15px rgba(0,0,0,0.45), 0 0 18px rgba(0,229,200,0.25)",transition:"all .15s ease",filter:"drop-shadow(0 0 4px rgba(125,249,236,0.45))"
   };
 
   return(
@@ -1054,7 +1031,7 @@ export default function GEOINTv10(){
 
         <main style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
           <div ref={mapShellRef} style={{height:"56%",minHeight:320,borderBottom:`1px solid ${C.border}`,position:"relative",isolation:"isolate"}}>
-            <MapView selected={selected} setSelected={setSelected} timeRangeHours={timeRange.hours}/>
+            <MapView selected={selected} setSelected={setSelected} visibleTrajectories={filteredFeed.trajectories.map((event)=>event.metadata)}/>
             <div style={{position:"absolute",right:12,bottom:92,zIndex:500,display:"flex",flexDirection:"column",gap:8}}>
               <button onClick={()=>{setAiOpen(v=>!v);setActiveOverlay("ai");}} style={floatingBtn} title="AI Analysis"><ControlIcon type="ai"/></button>
               <button onClick={()=>{setChatOpen(v=>!v);setActiveOverlay("chat");}} style={floatingBtn} title="Live Chat"><ControlIcon type="chat"/></button>
@@ -1066,7 +1043,7 @@ export default function GEOINTv10(){
           </div>
 
           <div style={{flex:1,minHeight:0,overflow:"hidden"}}>
-            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange}/>
+            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed}/>
           </div>
         </main>
       </div>
