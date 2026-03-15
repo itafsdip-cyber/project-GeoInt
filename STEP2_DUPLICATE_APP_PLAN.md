@@ -63,3 +63,8 @@ These are likely obsolete once migration cleanup is approved and validated:
   - `package.json`
   - `package-lock.json`
   - `proxy-server.cjs`
+
+
+## Follow-up
+
+- See `STEP3_CLEANUP_PROPOSAL.md` for the next docs-only deletion proposal and pre-delete checks.
