@@ -5,18 +5,22 @@ export const DATA_MODE = {
 };
 
 const PROVIDER_TYPE_BY_KEY = {
-  gdelt: "newswire",
-  rss: "newswire",
+  gdelt: "news",
+  rss: "rss",
   reddit: "social",
   x: "social",
 };
 
 const RELIABILITY_BY_PROVIDER_TYPE = {
-  official: 88,
-  newswire: 78,
-  social: 45,
-  unknown: 55,
+  official: 84,
+  news: 74,
+  rss: 66,
+  social: 42,
+  open_source: 58,
+  unknown: 52,
 };
+
+const MS_PER_HOUR = 3600000;
 
 /**
  * @typedef {Object} NormalizedGeoEvent
@@ -41,6 +45,10 @@ const RELIABILITY_BY_PROVIDER_TYPE = {
  * @property {string} [osint.lastUpdatedAt]
  * @property {string[]} [osint.actorTags]
  * @property {number} [osint.locationConfidence]
+ * @property {"official"|"news"|"social"|"rss"|"open_source"|"unknown"} [osint.providerCategory]
+ * @property {string|null} [osint.duplicateClusterId]
+ * @property {string[]} [osint.narrativeTags]
+ * @property {boolean} [osint.inferred]
  */
 
 export const normalizeSeverity = (value) => {
@@ -53,20 +61,28 @@ export const normalizeSeverity = (value) => {
 
 export const normalizeVerification = (isVerified) => (isVerified ? "verified" : "unverified");
 
-const fingerprintForEvent = (event) =>
-  String(event?.title || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .split(" ")
-    .slice(0, 8)
-    .join(" ");
+const normalizeText = (value = "") => String(value)
+  .toLowerCase()
+  .replace(/[^a-z0-9\s]/g, " ")
+  .replace(/\s+/g, " ")
+  .trim();
+
+const tokenizeTitle = (value = "") => normalizeText(value).split(" ").filter((token) => token.length >= 4);
+
+const titleSimilarity = (a, b) => {
+  const aSet = new Set(tokenizeTitle(a));
+  const bSet = new Set(tokenizeTitle(b));
+  if (aSet.size === 0 || bSet.size === 0) return 0;
+  const overlap = [...aSet].filter((token) => bSet.has(token)).length;
+  return overlap / Math.max(aSet.size, bSet.size);
+};
 
 const inferProviderType = (event) => {
   const providerKey = String(event?.metadata?.provider || event?.source || "").toLowerCase();
   if (PROVIDER_TYPE_BY_KEY[providerKey]) return PROVIDER_TYPE_BY_KEY[providerKey];
-  if (providerKey.includes("mod") || providerKey.includes("defense") || providerKey.includes("centcom")) return "official";
+  if (providerKey.includes("mod") || providerKey.includes("defense") || providerKey.includes("centcom") || providerKey.includes("ministry")) return "official";
+  if (providerKey.includes("open source") || providerKey.includes("osint")) return "open_source";
+  if (providerKey.includes("times") || providerKey.includes("post") || providerKey.includes("news") || providerKey.includes("reuters") || providerKey.includes("ap")) return "news";
   return "unknown";
 };
 
@@ -74,39 +90,105 @@ const inferActorTags = (event) => {
   const explicitTags = Array.isArray(event?.metadata?.tags) ? event.metadata.tags : [];
   if (explicitTags.length > 0) return explicitTags.slice(0, 6);
   const text = `${event?.title || ""} ${event?.region || ""}`;
-  return (text.match(/\b([A-Z]{2,}|Iran|Israel|UAE|US|Russia|China|NATO|Houthi|IDF)\b/g) || []).slice(0, 6);
+  return (text.match(/\b([A-Z]{2,}|Iran|Israel|UAE|US|Russia|China|NATO|Houthi|IDF|IRGC|Hezbollah)\b/g) || []).slice(0, 6);
+};
+
+const inferNarrativeTags = (event) => {
+  const text = normalizeText(`${event?.title || ""} ${event?.metadata?.detail || ""}`);
+  const tags = [];
+  if (/missile|drone|strike|intercept|air defense|rocket/.test(text)) tags.push("kinetic-activity");
+  if (/shipping|hormuz|tanker|maritime|port/.test(text)) tags.push("maritime-disruption");
+  if (/sanction|oil|market|price|insurance|trade/.test(text)) tags.push("economic-pressure");
+  if (/summit|talks|diplom|ceasefire|negotiat/.test(text)) tags.push("diplomatic-signal");
+  if (/cyber|network|satellite|jamming/.test(text)) tags.push("information-domain");
+  return tags.slice(0, 3);
+};
+
+const buildClusters = (events = []) => {
+  const clusters = [];
+  const eventById = new Map(events.map((event) => [event.id, event]));
+
+  events.forEach((event) => {
+    const eventTime = new Date(event.timestamp).getTime();
+    const title = event.title || "";
+    const region = normalizeText(event.region || "");
+
+    let targetCluster = null;
+    for (const cluster of clusters) {
+      const clusterTime = cluster.averageTime;
+      const hoursDelta = Number.isFinite(eventTime) && Number.isFinite(clusterTime)
+        ? Math.abs(eventTime - clusterTime) / MS_PER_HOUR
+        : Infinity;
+      const sameRegion = region && cluster.region && (region.includes(cluster.region) || cluster.region.includes(region));
+      const similarTitle = titleSimilarity(title, cluster.representativeTitle) >= 0.45;
+      if (hoursDelta <= 8 && (sameRegion || similarTitle)) {
+        targetCluster = cluster;
+        break;
+      }
+    }
+
+    if (!targetCluster) {
+      targetCluster = {
+        id: `cluster-${clusters.length + 1}`,
+        eventIds: [],
+        sourceSet: new Set(),
+        firstSeen: event.timestamp,
+        lastSeen: event.timestamp,
+        representativeTitle: title,
+        region,
+        averageTime: Number.isFinite(eventTime) ? eventTime : Date.now(),
+      };
+      clusters.push(targetCluster);
+    }
+
+    targetCluster.eventIds.push(event.id);
+    targetCluster.sourceSet.add(String(event.source || "unknown").toLowerCase());
+
+    if (new Date(event.timestamp).getTime() < new Date(targetCluster.firstSeen).getTime()) targetCluster.firstSeen = event.timestamp;
+    if (new Date(event.timestamp).getTime() > new Date(targetCluster.lastSeen).getTime()) targetCluster.lastSeen = event.timestamp;
+
+    const sumTimes = targetCluster.eventIds.reduce((acc, id) => {
+      const ts = new Date(eventById.get(id)?.timestamp).getTime();
+      return Number.isFinite(ts) ? acc + ts : acc;
+    }, 0);
+    targetCluster.averageTime = sumTimes / targetCluster.eventIds.length;
+  });
+
+  return clusters;
 };
 
 export function enrichEventsWithOsint(events = [], generatedAt = new Date().toISOString()) {
-  const counts = new Map();
-  const firstSeen = new Map();
-
-  events.forEach((event) => {
-    const key = fingerprintForEvent(event);
-    if (!key) return;
-    counts.set(key, (counts.get(key) || 0) + 1);
-    const ts = new Date(event.timestamp).getTime();
-    if (!Number.isFinite(ts)) return;
-    const current = firstSeen.get(key);
-    if (!current || ts < current) firstSeen.set(key, ts);
+  const clusters = buildClusters(events);
+  const clusterByEventId = new Map();
+  clusters.forEach((cluster) => {
+    cluster.eventIds.forEach((id) => clusterByEventId.set(id, cluster));
   });
 
   return events.map((event) => {
-    const key = fingerprintForEvent(event);
-    const crossSourceCount = counts.get(key) || 1;
-    const providerType = inferProviderType(event);
-    const sourceReliability = RELIABILITY_BY_PROVIDER_TYPE[providerType] || RELIABILITY_BY_PROVIDER_TYPE.unknown;
+    const cluster = clusterByEventId.get(event.id) || null;
+    const crossSourceCount = cluster ? Math.max(1, cluster.sourceSet.size) : 1;
+    const providerCategory = inferProviderType(event);
+    const sourceReliability = RELIABILITY_BY_PROVIDER_TYPE[providerCategory] || RELIABILITY_BY_PROVIDER_TYPE.unknown;
+    const hasCoordinates = event.latitude != null && event.longitude != null;
     const baseVerified = event.verificationStatus === "verified";
-    const verificationStatus = baseVerified
-      ? "verified"
-      : (providerType === "social" && crossSourceCount > 1 ? "disputed" : "unverified");
+    const inferred = !baseVerified;
+
+    let verificationStatus = "unverified";
+    if (baseVerified) verificationStatus = "verified";
+    else if (providerCategory === "social" && crossSourceCount <= 1) verificationStatus = "disputed";
+
+    const proximityBoost = cluster && cluster.eventIds.length > 1 ? 8 : 0;
     const confidenceScore = Math.max(
-      20,
-      Math.min(96, Math.round(sourceReliability * 0.6 + crossSourceCount * 12 + (baseVerified ? 15 : 0))),
+      18,
+      Math.min(
+        95,
+        Math.round(sourceReliability * 0.58 + crossSourceCount * 10 + (hasCoordinates ? 7 : 0) + proximityBoost + (baseVerified ? 16 : 0)),
+      ),
     );
-    const locationConfidence = event.latitude != null && event.longitude != null
-      ? Math.min(95, sourceReliability + 12)
-      : Math.max(35, sourceReliability - 18);
+
+    const locationConfidence = hasCoordinates
+      ? Math.min(94, sourceReliability + (crossSourceCount > 1 ? 10 : 4))
+      : Math.max(30, sourceReliability - 20);
 
     return {
       ...event,
@@ -115,10 +197,14 @@ export function enrichEventsWithOsint(events = [], generatedAt = new Date().toIS
         verificationStatus,
         confidenceScore,
         crossSourceCount,
-        firstSeenAt: firstSeen.get(key) ? new Date(firstSeen.get(key)).toISOString() : event.timestamp || null,
+        firstSeenAt: cluster?.firstSeen || event.timestamp || null,
         lastUpdatedAt: generatedAt,
         actorTags: inferActorTags(event),
         locationConfidence,
+        providerCategory,
+        duplicateClusterId: cluster?.id || null,
+        narrativeTags: inferNarrativeTags(event),
+        inferred,
       },
     };
   });

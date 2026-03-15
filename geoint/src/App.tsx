@@ -207,6 +207,24 @@ const osintColor = (label) => {
   return C.gold;
 };
 
+const providerCategoryStyle = (providerCategory) => {
+  const key = String(providerCategory || "unknown").toLowerCase();
+  if (key === "official") return { label: "OFFICIAL", color: C.green };
+  if (key === "news") return { label: "NEWS", color: C.cyan };
+  if (key === "social") return { label: "SOCIAL", color: C.orange };
+  if (key === "rss") return { label: "RSS", color: C.gold };
+  if (key === "open_source") return { label: "OPEN", color: C.purple };
+  return { label: "UNKNOWN", color: C.textDim };
+};
+
+const osintMetaBadges = (osint = {}) => {
+  const badges = [];
+  if ((osint.crossSourceCount || 1) > 1) badges.push({ label: "MULTI-SOURCE", color: C.cyan });
+  if ((osint.confidenceScore || 0) < 45) badges.push({ label: "LOW CONFIDENCE", color: C.orange });
+  if (osint.inferred) badges.push({ label: "HEURISTIC", color: C.textDim });
+  return badges;
+};
+
 function SrcLink({srcKey,url,compact}){
   const s=SOURCES[srcKey]||{name:srcKey,credibility:70,url:"#",type:"Unknown",bias:"Unknown"};
   const cc=s.credibility>=90?C.green:s.credibility>=70?C.gold:s.credibility>=50?C.orange:C.red;
@@ -440,8 +458,9 @@ function MapView({selected,setSelected,visibleTrajectories}){
               <span><span style={{color:C.textDim}}>STATUS: </span><span style={{color:selTraj.intercepted?C.green:C.red}}>{selTraj.intercepted?"INTERCEPTED":"ACTIVE"}</span></span>
             </div>
             <div style={{fontSize:9,color:C.textDim,marginTop:4}}>{selTraj.detail}</div>
-            {selTraj.osint&&<div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap"}}>
+            {selTraj.osint&&<div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap",alignItems:"center"}}>
               {(() => { const label = osintLabel(selTraj.osint); const color = osintColor(label); return <span style={{fontSize:8,color,background:`${color}1c`,border:`1px solid ${color}55`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{label}</span>; })()}
+              {osintMetaBadges(selTraj.osint).map((badge)=><span key={`${selTraj.id}-${badge.label}`} style={{fontSize:7.5,color:badge.color,border:`1px solid ${badge.color}55`,background:`${badge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{badge.label}</span>)}
               <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>SRC {selTraj.osint.crossSourceCount} · LOC {selTraj.osint.locationConfidence}%</span>
             </div>}
           </div>
@@ -781,20 +800,25 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed}){
               const osint = a.osint || {};
               const label = osintLabel(osint);
               const labelColor = osintColor(label);
+              const providerBadge = providerCategoryStyle(osint.providerCategory);
+              const metaBadges = osintMetaBadges(osint);
               return(
                 <div key={a.id} style={{background:isNew?`${col}12`:C.panel,border:`1px solid ${isNew?col:C.border}`,borderLeft:`3px solid ${col}`,borderRadius:3,padding:"10px 15px",transition:"all 0.5s"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
-                    <div style={{display:"flex",gap:7,alignItems:"center"}}>
+                    <div style={{display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
                       <span style={{fontSize:9,color:C.textDim,fontFamily:C.mono}}>{new Date(a.timestamp).toISOString().slice(11,16)} UTC</span>
                       <span style={{fontSize:8,color:col,background:`${col}22`,padding:"1px 7px",borderRadius:2,fontFamily:C.mono,fontWeight:"bold",letterSpacing:1}}>{String(a.severity).toUpperCase()}</span>
                       {isNew&&<span style={{fontSize:7,color:col,fontFamily:C.mono,letterSpacing:1}}>● NEW</span>}
                       <span style={{fontSize:8,color:labelColor,border:`1px solid ${labelColor}55`,background:`${labelColor}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{label}</span>
+                      <span style={{fontSize:7.5,color:providerBadge.color,border:`1px solid ${providerBadge.color}55`,background:`${providerBadge.color}16`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{providerBadge.label}</span>
+                      {metaBadges.map((badge)=><span key={`${a.id}-${badge.label}`} style={{fontSize:7,color:badge.color,border:`1px solid ${badge.color}55`,background:`${badge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{badge.label}</span>)}
                     </div>
                     <span style={{fontSize:9,color:C.textDim,fontFamily:C.mono}}>{a.region}</span>
                   </div>
                   <div style={{fontSize:12,color:C.text,lineHeight:"1.45",marginBottom:5,fontWeight:500,fontFamily:C.mono}}>{a.title}</div>
                   <div style={{fontSize:9,color:C.textDim,lineHeight:"1.55",marginBottom:7}}>{a.metadata.detail}</div>
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:7}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>CONF {osint.confidenceScore ?? "--"}%</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>SOURCES {osint.crossSourceCount ?? 1}</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>LOC {osint.locationConfidence ?? "--"}%</span></div>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:7}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>CONF {osint.confidenceScore ?? "--"}%</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>SOURCES {osint.crossSourceCount ?? 1}</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>LOC {osint.locationConfidence ?? "--"}%</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>CLUSTER {osint.duplicateClusterId || "N/A"}</span></div>
+                  {osint.inferred&&<div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:7}}>Heuristic OSINT assessment (not independently confirmed).</div>}
                   <a href={a.metadata.sourceUrl} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",fontFamily:C.mono}}>⊕ {a.source} ↗</a>
                 </div>
               );
@@ -815,16 +839,18 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed}){
               const osint=e.osint||{};
               const label=osintLabel(osint);
               const labelColor=osintColor(label);
+              const providerBadge=providerCategoryStyle(osint.providerCategory);
+              const metaBadges=osintMetaBadges(osint);
               return(<div key={e.id} onClick={()=>setExpanded(isEx?null:e.id)} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`3px solid ${ec}`,borderRadius:3,padding:"10px 14px",cursor:"pointer"}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{new Date(e.timestamp).toISOString().slice(11,16)} UTC</span><span style={{fontSize:8,color:ec,background:`${ec}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{eventType}</span><span style={{fontSize:7.5,color:labelColor,border:`1px solid ${labelColor}55`,background:`${labelColor}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{label}</span></div><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.region}</span></div>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{new Date(e.timestamp).toISOString().slice(11,16)} UTC</span><span style={{fontSize:8,color:ec,background:`${ec}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{eventType}</span><span style={{fontSize:7.5,color:labelColor,border:`1px solid ${labelColor}55`,background:`${labelColor}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{label}</span><span style={{fontSize:7.5,color:providerBadge.color,border:`1px solid ${providerBadge.color}55`,background:`${providerBadge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{providerBadge.label}</span>{metaBadges.map((badge)=><span key={`${e.id}-${badge.label}`} style={{fontSize:7,color:badge.color,border:`1px solid ${badge.color}55`,background:`${badge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{badge.label}</span>)}</div><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.region}</span></div>
                 <div style={{fontSize:11.5,color:C.text,lineHeight:"1.4",marginBottom:isEx?6:0,fontFamily:C.mono}}>{e.title}</div>
-                {isEx&&<><div style={{fontSize:9,color:C.textDim,lineHeight:"1.6",marginBottom:7}}>{e.metadata.detail}</div><div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:7}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>CONF {osint.confidenceScore ?? "--"}%</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>SOURCES {osint.crossSourceCount ?? 1}</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>REL {osint.sourceReliability ?? "--"}%</span></div><div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:6}}>{(osint.actorTags || []).slice(0,4).map((tag,i)=><span key={`${e.id}-tag-${i}`} style={{fontSize:7.5,color:C.cyan,border:`1px solid ${C.cyan}44`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{tag}</span>)}</div><div style={{display:"flex",flexWrap:"wrap",gap:3}}>{e.metadata.sources?.map((x,i)=><SrcLink key={i} srcKey={x.key} url={x.url} compact/>)}</div></>}
+                {isEx&&<><div style={{fontSize:9,color:C.textDim,lineHeight:"1.6",marginBottom:7}}>{e.metadata.detail}</div><div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:7}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>CONF {osint.confidenceScore ?? "--"}%</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>SOURCES {osint.crossSourceCount ?? 1}</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>REL {osint.sourceReliability ?? "--"}%</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>CLUSTER {osint.duplicateClusterId || "N/A"}</span></div>{osint.inferred&&<div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:6}}>Heuristic OSINT signals; verification pending.</div>}<div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:6}}>{(osint.actorTags || []).slice(0,4).map((tag,i)=><span key={`${e.id}-tag-${i}`} style={{fontSize:7.5,color:C.cyan,border:`1px solid ${C.cyan}44`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{tag}</span>)}{(osint.narrativeTags || []).slice(0,3).map((tag,i)=><span key={`${e.id}-narr-${i}`} style={{fontSize:7.5,color:C.purple,border:`1px solid ${C.purple}44`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{tag}</span>)}</div><div style={{display:"flex",flexWrap:"wrap",gap:3}}>{e.metadata.sources?.map((x,i)=><SrcLink key={i} srcKey={x.key} url={x.url} compact/>)}</div></>}
               </div>);
             })}
           </div>
         )}
 
-        {tab==="timeline"&&(<div style={{position:"relative",paddingLeft:22}}><div style={{position:"absolute",left:9,top:0,bottom:0,width:1,background:`linear-gradient(180deg,transparent,${C.cyan}55,transparent)`}}/>{filteredTimeline.map((entry,i)=>{const t=entry.metadata;const col=typeC[t.type]||C.cyan;return(<div key={entry.id||i} style={{position:"relative",paddingBottom:16}}><div style={{position:"absolute",left:-15,top:5,width:8,height:8,borderRadius:"50%",background:col,border:`2px solid ${C.bg}`}}/><div style={{fontSize:8,color:C.cyan,fontFamily:C.mono,marginBottom:2}}>{t.date}</div><div style={{fontSize:10.5,color:C.text,lineHeight:"1.5",marginBottom:5}}>{entry.title}</div><div style={{display:"flex",gap:6,alignItems:"center"}}><span style={{fontSize:7,color:col,background:`${col}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{t.type}</span><a href={t.srcUrl} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",fontFamily:C.mono}}>⊕ {entry.source} ↗</a></div></div>);})}</div>)}
+        {tab==="timeline"&&(<div style={{position:"relative",paddingLeft:22}}><div style={{position:"absolute",left:9,top:0,bottom:0,width:1,background:`linear-gradient(180deg,transparent,${C.cyan}55,transparent)`}}/>{filteredTimeline.map((entry,i)=>{const t=entry.metadata;const col=typeC[t.type]||C.cyan;const osint=entry.osint||{};const label=osintLabel(osint);const labelColor=osintColor(label);return(<div key={entry.id||i} style={{position:"relative",paddingBottom:16}}><div style={{position:"absolute",left:-15,top:5,width:8,height:8,borderRadius:"50%",background:col,border:`2px solid ${C.bg}`}}/><div style={{fontSize:8,color:C.cyan,fontFamily:C.mono,marginBottom:2}}>{t.date}</div><div style={{fontSize:10.5,color:C.text,lineHeight:"1.5",marginBottom:5}}>{entry.title}</div><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:7,color:col,background:`${col}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{t.type}</span><span style={{fontSize:7,color:labelColor,border:`1px solid ${labelColor}55`,background:`${labelColor}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{label}</span>{(osint.crossSourceCount || 1) > 1 && <span style={{fontSize:7,color:C.cyan,border:`1px solid ${C.cyan}55`,background:`${C.cyan}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>MULTI-SOURCE</span>}<a href={t.srcUrl} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",fontFamily:C.mono}}>⊕ {entry.source} ↗</a></div></div>);})}</div>)}
 
         {tab==="influence"&&(<div style={{display:"flex",flexDirection:"column",gap:5}}>{INFLUENCES.map((inf,i)=>{const col=IC[inf.type]||C.cyan;return(<div key={i} onClick={()=>setInfExp(infExp===i?null:i)} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${col}`,borderRadius:3,padding:"8px 12px",cursor:"pointer"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}><div style={{display:"flex",gap:7,alignItems:"center",minWidth:0}}><span style={{fontSize:10,color:C.text,whiteSpace:"nowrap"}}>{inf.from}</span><span style={{fontSize:10,color:col}}>→</span><span style={{fontSize:10,color:C.text,whiteSpace:"nowrap"}}>{inf.to}</span></div><span style={{fontSize:8,color:col,background:`${col}18`,padding:"2px 7px",borderRadius:2,fontFamily:C.mono}}>{inf.type}</span><span style={{fontSize:9,color:col,fontFamily:C.mono,minWidth:26}}>{inf.str}%</span></div>{infExp===i&&<div style={{marginTop:8}}><div style={{fontSize:9,color:C.textDim,lineHeight:"1.65",marginBottom:6}}>{inf.note}</div><SrcLink srcKey={inf.src} url={inf.srcUrl}/></div>}</div>);})}</div>)}
 
