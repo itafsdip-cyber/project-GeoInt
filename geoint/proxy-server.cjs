@@ -1,6 +1,15 @@
 const http = require('http');
 const https = require('https');
-require('dotenv').config();
+
+try {
+  require('dotenv').config();
+} catch (error) {
+  if (error && error.code === 'MODULE_NOT_FOUND') {
+    console.warn('⚠️ dotenv is not installed. Run `npm install` to load .env files automatically.');
+  } else {
+    throw error;
+  }
+}
 
 const { sourceRegistryFromEnv } = require('./api/sourceRegistry.cjs');
 const { fetchGdeltEvents } = require('./api/connectors/gdeltConnector.cjs');

@@ -1,85 +1,49 @@
 # LIVE_DATA_SETUP
 
-## Overview
-The GEOINT app now supports a production-minded multi-source ingestion pipeline via the Node proxy (`proxy-server.cjs`) with provider connectors for:
-- **GDELT** (primary global event/news stream)
-- **Reddit API**
-- **X API v2 (recent search)**
-- **RSS feeds**
+## Local development quick start
 
-The frontend never receives provider secrets directly. Credentials are read from server environment variables.
-
-## Run
-1. Start app UI:
+1. Copy env template and keep secrets server-side:
    ```bash
-   npm run dev
+   cp .env.example .env.local
    ```
-2. Start live proxy server (separate shell):
-   ```bash
-   node proxy-server.cjs
-   ```
-3. Set frontend base URL:
+2. Ensure frontend live base URL is set:
    ```bash
    VITE_GEOINT_LIVE_API_BASE=http://localhost:3001
    ```
+3. Start backend live ingestion server (terminal 1):
+   ```bash
+   npm run live:server
+   ```
+4. Start frontend Vite app (terminal 2):
+   ```bash
+   npm run dev
+   ```
 
-## Required / optional environment variables
+> After changing any `VITE_*` variable, restart Vite. It only reads env vars at startup.
 
-### Core
-- `VITE_GEOINT_LIVE_API_BASE` (frontend) – base URL for `/events/normalized`.
+## Recommended local provider defaults
+For easiest local bring-up, use **GDELT + RSS** first.
 
-### GDELT
-- `GEOINT_ENABLE_GDELT=true|false`
-- `GEOINT_GDELT_QUERY` (default: geopolitical conflict query)
-- `GEOINT_GDELT_LIMIT` (default 50)
-- `GEOINT_GDELT_REFRESH_MS` (default 120000)
+- `GEOINT_ENABLE_GDELT=true`
+- `GEOINT_ENABLE_RSS=true`
+- `GEOINT_ENABLE_REDDIT=false` (enable only when Reddit credentials are configured)
+- `GEOINT_ENABLE_X=false` (enable only when X credentials are configured)
 
-### Reddit
-- `GEOINT_ENABLE_REDDIT=true|false`
-- `REDDIT_CLIENT_ID`
-- `REDDIT_CLIENT_SECRET`
-- `REDDIT_USER_AGENT`
-- `GEOINT_REDDIT_SUBREDDITS` (comma separated)
-- `GEOINT_REDDIT_KEYWORDS` (comma separated; reserved for additional filtering)
-- `GEOINT_REDDIT_REFRESH_MS` (default 180000)
+## Environment variables
 
-### X
-- `GEOINT_ENABLE_X=true|false`
-- `X_BEARER_TOKEN`
-- `GEOINT_X_QUERY`
-- `GEOINT_X_MAX_RESULTS`
-- `GEOINT_X_REFRESH_MS`
+### Frontend (safe to expose)
+- `VITE_GEOINT_LIVE_API_BASE` – base URL used by the frontend to request `/events/normalized`.
 
-### RSS
-- `GEOINT_ENABLE_RSS=true|false`
-- `GEOINT_RSS_FEEDS` (comma separated URLs)
-- `GEOINT_RSS_REFRESH_MS`
+### Backend providers (server-side only)
+- `GEOINT_ENABLE_GDELT`, `GEOINT_GDELT_QUERY`, `GEOINT_GDELT_LIMIT`, `GEOINT_GDELT_REFRESH_MS`
+- `GEOINT_ENABLE_REDDIT`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT`, `GEOINT_REDDIT_SUBREDDITS`, `GEOINT_REDDIT_KEYWORDS`, `GEOINT_REDDIT_REFRESH_MS`
+- `GEOINT_ENABLE_X`, `X_BEARER_TOKEN`, `GEOINT_X_QUERY`, `GEOINT_X_MAX_RESULTS`, `GEOINT_X_REFRESH_MS`
+- `GEOINT_ENABLE_RSS`, `GEOINT_RSS_FEEDS`, `GEOINT_RSS_REFRESH_MS`
 
-### Anthropic proxy (existing)
+### Other backend credentials (server-side only)
 - `ANTHROPIC_API_KEY`
 
-## Source health states shown in UI
-- `ACTIVE`
-- `UNAVAILABLE`
-- `RATE LIMITED`
-- `AUTH MISSING`
-- `ERROR`
-
-The right panel now includes a **LIVE SOURCES** status strip driven by backend `sourceStatuses`.
-
-## Paid/commercial considerations
-- **X API** generally requires elevated/paid access for meaningful production throughput.
-- **Reddit API** may require approved app configuration and policy compliance.
-- **GDELT** is open but has query and operational constraints.
-- Some premium news APIs are not implemented in this pass.
-
-## Known limitations
-- RSS parser is intentionally lightweight (XML tag extraction); malformed feeds may fail.
-- X integration currently uses recent search endpoint (streaming upgrade path is prepared by modular connector architecture).
-- Regional extraction quality depends on provider metadata (not all posts/articles include geodata).
-
-## What still needs backend/provider approval
-- Production hardening for secrets management (vault/secret manager)
-- Provider quota management and retry backoff tuning
-- Optional persistence layer for long-term event history
-- Enterprise X/Reddit app review and elevated access where needed
+## Notes
+- `proxy-server.cjs` loads `.env*` values with `dotenv`.
+- Do not commit real credentials. Keep placeholders in tracked files only.
+- If `VITE_GEOINT_LIVE_API_BASE` is missing, UI intentionally falls back to demo feed with a concise startup note.
