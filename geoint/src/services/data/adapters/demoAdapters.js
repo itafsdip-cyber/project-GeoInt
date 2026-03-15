@@ -76,4 +76,11 @@ export const buildDemoFeed = ({ alerts, events, timeline, trajectories, sources 
     region: `${trajectory.fromLabel || "Unknown"} → ${trajectory.toLabel || "Unknown"}`,
     metadata: { ...trajectory, feedType: "trajectories" },
   })),
+  sourceStatuses: {
+    gdelt: { provider: "gdelt", state: "unavailable", reason: "Demo mode" },
+    reddit: { provider: "reddit", state: "unavailable", reason: "Demo mode" },
+    x: { provider: "x", state: "unavailable", reason: "Demo mode" },
+    rss: { provider: "rss", state: "unavailable", reason: "Demo mode" },
+  },
+  generatedAt: DEMO_CLOCK_UTC.toISOString(),
 });

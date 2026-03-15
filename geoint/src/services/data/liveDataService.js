@@ -3,7 +3,7 @@ import { DATA_MODE } from "./normalizedEventModel";
 import { buildDemoFeed } from "./adapters/demoAdapters";
 import { fetchLiveFeedOrFallback } from "./adapters/liveProviders";
 
-export const filterEventsByTimeRange = (items, rangeHours, now = new Date("2026-03-10T04:30:00.000Z")) => {
+export const filterEventsByTimeRange = (items, rangeHours, now = new Date()) => {
   const cutoff = now.getTime() - rangeHours * 3600000;
   return items.filter((item) => new Date(item.timestamp).getTime() >= cutoff);
 };
@@ -43,6 +43,8 @@ export function useFilteredGeoFeed({ feed, timeRangeHours }) {
       timeline: filterEventsByTimeRange(feed.timeline || [], timeRangeHours),
       trajectories: filterEventsByTimeRange(feed.trajectories || [], timeRangeHours),
       sources: feed.sources || [],
+      sourceStatuses: feed.sourceStatuses || {},
+      generatedAt: feed.generatedAt || null,
     }),
     [feed, timeRangeHours],
   );
