@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { DATA_MODE } from "./services/data/normalizedEventModel";
 import { useGeoFeed, useFilteredGeoFeed } from "./services/data/liveDataService";
+import { orderedProviderStatus } from "./services/data/connectors/sourceRegistry";
 
 /* ═══════════════════════════════════════════════════════════════════
    GEOINT v10 — pixel-perfect UI match to reference screenshot
@@ -720,6 +721,7 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed}){
   const filteredEvents = feed.events || [];
   const filteredTimeline = feed.timeline || [];
   const sourceFeed = feed.sources || [];
+  const providerStatuses = orderedProviderStatus(feed.sourceStatuses);
 
   return(
     <div style={{display:"flex",flexDirection:"column",gap:10,padding:"10px 12px",overflow:"hidden",minHeight:0}}>
@@ -741,6 +743,18 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed}){
       </div>
 
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}><div style={{display:"flex",gap:6,alignItems:"center",overflowX:"auto",paddingBottom:2}}><span style={{fontSize:8,color:C.textDim,letterSpacing:1,fontFamily:C.mono}}>RANGE</span>{TIME_RANGES.map((r)=><button key={r.id} onClick={()=>setTimeRange(r)} style={{background:timeRange.id===r.id?`${C.cyan}22`:"rgba(255,255,255,0.02)",border:`1px solid ${timeRange.id===r.id?C.cyan:C.border}`,color:timeRange.id===r.id?C.cyan:C.textDim,padding:"4px 9px",fontSize:8,borderRadius:3,cursor:"pointer",fontFamily:C.mono}}>{r.label}</button>)}</div><span style={{fontSize:8,color:dataMode===DATA_MODE.LIVE?C.green:dataMode===DATA_MODE.LIVE_UNAVAILABLE?C.orange:C.textDim,fontFamily:C.mono}}>DATA MODE: {dataMode}{statusNote ? ` · ${statusNote}` : ""}</span></div>
+
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,alignItems:"center",background:C.panel,border:`1px solid ${C.border}`,borderRadius:4,padding:"6px 8px"}}>
+        <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono,letterSpacing:1}}>LIVE SOURCES</span>
+        {providerStatuses.map((provider)=>{
+          const color = provider.state === "active" ? C.green : provider.state === "rate_limited" ? C.gold : provider.state === "auth_missing" ? C.orange : C.red;
+          return (
+            <span key={provider.key} title={provider.reason} style={{fontSize:8,color:color,border:`1px solid ${color}55`,background:`${color}11`,borderRadius:3,padding:"2px 6px",fontFamily:C.mono}}>
+              {provider.name}: {String(provider.state).replaceAll("_", " ").toUpperCase()}
+            </span>
+          );
+        })}
+      </div>
 
       <div style={{flex:1,overflow:"auto",minHeight:0,paddingRight:4,border:`1px solid ${C.border}`,borderRadius:4,padding:"8px 8px 8px 4px",background:"rgba(5,9,15,0.45)"}}>
         {tab==="monitor"&&(
@@ -804,7 +818,7 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed}){
           </div>
         )}
 
-        {tab==="sources"&&(<div style={{display:"flex",flexDirection:"column",gap:5}}><div style={{fontSize:9,color:C.textDim,fontFamily:C.mono,marginBottom:5}}>{Object.keys(SOURCES).length} verified sources · click to visit</div>{sourceFeed.map((entry,i)=>{const s=entry.metadata;const cc=s.credibility>=90?C.green:s.credibility>=75?C.gold:s.credibility>=55?C.orange:C.red;return(<a key={entry.id||i} href={s.url} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${cc}`,borderRadius:3,padding:"8px 12px",textDecoration:"none"}}><div><div style={{fontSize:10,color:C.text,marginBottom:2}}>{s.name}</div><div style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{s.type} · Bias: {s.bias}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:13,color:cc,fontWeight:"bold",fontFamily:C.mono}}>{s.credibility}%</div><div style={{fontSize:8,color:C.textDim}}>↗ visit</div></div></a>);})}</div>)}
+        {tab==="sources"&&(<div style={{display:"flex",flexDirection:"column",gap:5}}><div style={{fontSize:9,color:C.textDim,fontFamily:C.mono,marginBottom:5}}>{sourceFeed.length} source connectors · click to inspect</div>{sourceFeed.map((entry,i)=>{const s=entry.metadata;const cc=s.credibility>=90?C.green:s.credibility>=75?C.gold:s.credibility>=55?C.orange:C.red;return(<a key={entry.id||i} href={s.url} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${cc}`,borderRadius:3,padding:"8px 12px",textDecoration:"none"}}><div><div style={{fontSize:10,color:C.text,marginBottom:2}}>{s.name}</div><div style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{s.type} · Bias: {s.bias}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:13,color:cc,fontWeight:"bold",fontFamily:C.mono}}>{s.credibility}%</div><div style={{fontSize:8,color:C.textDim}}>↗ visit</div></div></a>);})}</div>)}
       </div>
     </div>
   );
