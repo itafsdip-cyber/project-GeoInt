@@ -52,6 +52,8 @@ async function fetchGdeltEvents(config) {
           domain: article.domain,
           language: article.language,
           tone: article.tone,
+          locationPrecision: article.locations?.[0] ? 'region' : 'unknown',
+          geolocationSource: article.locations?.[0] ? 'provider_coordinates' : 'unknown',
           raw: article,
         },
       };
