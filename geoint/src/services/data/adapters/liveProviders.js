@@ -1,7 +1,7 @@
 import { buildDemoFeed } from './demoAdapters';
 import { DATA_MODE } from '../normalizedEventModel';
 
-const LIVE_API_BASE = import.meta.env.VITE_GEOINT_LIVE_API_BASE;
+const LIVE_API_BASE = import.meta.env.VITE_GEOINT_LIVE_API_BASE?.trim();
 
 function hasActiveSource(sourceStatuses = {}) {
   return Object.values(sourceStatuses).some((status) => status?.state === 'active');
@@ -17,7 +17,7 @@ export async function fetchLiveFeedOrFallback(demoInput) {
   if (!LIVE_API_BASE) {
     return {
       mode: DATA_MODE.LIVE_UNAVAILABLE,
-      reason: 'VITE_GEOINT_LIVE_API_BASE is not configured',
+      reason: 'Live API is not configured. Set VITE_GEOINT_LIVE_API_BASE in .env.development or .env.local and restart Vite.',
       feed: buildDemoFeed(demoInput),
     };
   }
