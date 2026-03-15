@@ -3,6 +3,8 @@ import { DATA_MODE, osintLabel } from "./services/data/normalizedEventModel";
 import { useGeoFeed, useFilteredGeoFeed } from "./services/data/liveDataService";
 import { orderedProviderStatus } from "./services/data/connectors/sourceRegistry";
 import { clusterEventsForZoom, precisionRadiusKm } from "./services/data/mapClustering";
+import { buildHeuristicAlerts, summarizeHeuristicAlerts, ALERT_TYPES } from "./services/intelligence/alertingService";
+import { WATCH_ITEM_TYPES, createWatchItem, matchEventAgainstWatchlist, buildWatchlistSummary } from "./services/intelligence/watchlistService";
 
 /* ═══════════════════════════════════════════════════════════════════
    GEOINT v10 — pixel-perfect UI match to reference screenshot
@@ -36,6 +38,14 @@ const TIME_RANGES = [
   { id: "12h", label: "12H", hours: 12 },
   { id: "24h", label: "24H", hours: 24 },
   { id: "7d", label: "7D", hours: 24 * 7 },
+];
+
+const DEFAULT_WATCH_TERMS = [
+  { type: "region", term: "Abu Dhabi" },
+  { type: "region", term: "Hormuz" },
+  { type: "actor", term: "IRGC" },
+  { type: "topic", term: "maritime" },
+  { type: "source", term: "UAE MoD" },
 ];
 
 
@@ -751,8 +761,79 @@ function ChatRoom({compact=false, onClose}){
   );
 }
 
+const alertTagStyle = (tag) => {
+  if (tag === ALERT_TYPES.NEW) return { color: C.cyan, bg: `${C.cyan}16` };
+  if (tag === ALERT_TYPES.MULTI_SOURCE) return { color: C.green, bg: `${C.green}16` };
+  if (tag === ALERT_TYPES.HIGH_SEVERITY) return { color: C.red, bg: `${C.red}16` };
+  if (tag === ALERT_TYPES.WATCHLIST_MATCH) return { color: C.gold, bg: `${C.gold}16` };
+  return { color: C.orange, bg: `${C.orange}16` };
+};
+
+function WatchlistPanel({ watchItems, setWatchItems, timeRange, watchlistSummary }) {
+  const [watchType, setWatchType] = useState(WATCH_ITEM_TYPES[0].id);
+  const [watchTerm, setWatchTerm] = useState("");
+
+  const addWatch = () => {
+    const item = createWatchItem({ type: watchType, term: watchTerm });
+    if (!item) return;
+    const exists = watchItems.some((existing) => existing.type === item.type && existing.normalizedTerm === item.normalizedTerm);
+    if (exists) return;
+    setWatchItems((prev) => [item, ...prev].slice(0, 24));
+    setWatchTerm("");
+  };
+
+  const removeWatch = (id) => setWatchItems((prev) => prev.filter((item) => item.id !== id));
+
+  return (
+    <div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:4,padding:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,gap:8}}>
+        <span style={{fontSize:9,color:C.cyan,letterSpacing:1,fontFamily:C.mono}}>WATCHLIST</span>
+        <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{watchItems.length} ACTIVE · {watchlistSummary.matchedEvents} MATCHES / {timeRange.label}</span>
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+        <select value={watchType} onChange={(e)=>setWatchType(e.target.value)} style={{background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,borderRadius:3,padding:"6px 7px",color:C.text,fontFamily:C.mono,fontSize:9}}>
+          {WATCH_ITEM_TYPES.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
+        </select>
+        <input value={watchTerm} onChange={(e)=>setWatchTerm(e.target.value)} onKeyDown={(e)=>e.key==="Enter"&&addWatch()} placeholder="Add watch term" style={{flex:1,minWidth:120,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,borderRadius:3,padding:"6px 9px",color:C.text,fontFamily:C.mono,fontSize:9,outline:"none"}}/>
+        <button onClick={addWatch} style={{background:`${C.cyan}14`,border:`1px solid ${C.cyan}44`,color:C.cyan,padding:"6px 10px",borderRadius:3,fontFamily:C.mono,fontSize:8,cursor:"pointer"}}>ADD</button>
+      </div>
+      <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+        {watchItems.map((item) => (
+          <span key={item.id} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:8,color:C.text,border:`1px solid ${C.border}`,background:"rgba(255,255,255,0.02)",padding:"2px 6px",borderRadius:2,fontFamily:C.mono}}>
+            <span style={{color:C.textDim}}>{item.type.toUpperCase()}</span>
+            <span>{item.term}</span>
+            <button onClick={()=>removeWatch(item.id)} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:9,padding:0,lineHeight:1}}>✕</button>
+          </span>
+        ))}
+        {watchItems.length===0 && <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>No active watches.</span>}
+      </div>
+    </div>
+  );
+}
+
+function AlertStrip({ heuristicAlerts }) {
+  const topAlerts = heuristicAlerts.slice(0, 6);
+  return (
+    <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:2}}>
+      {topAlerts.map((alert) => (
+        <div key={alert.id} style={{minWidth:220,background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${sevColor((alert.severity||"medium").toUpperCase())}`,borderRadius:3,padding:"6px 8px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:6,marginBottom:4}}>
+            <span style={{fontSize:8,color:C.text,fontFamily:C.mono}}>{alert.region || "Regional"}</span>
+            <span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>{new Date(alert.timestamp).toISOString().slice(11,16)} UTC</span>
+          </div>
+          <div style={{fontSize:9,color:C.text,lineHeight:1.4,marginBottom:5}}>{alert.title}</div>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+            {(alert.tags || []).map((tag) => { const style = alertTagStyle(tag); return <span key={`${alert.id}-${tag}`} style={{fontSize:7,color:style.color,background:style.bg,border:`1px solid ${style.color}55`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{tag}</span>; })}
+          </div>
+        </div>
+      ))}
+      {topAlerts.length===0 && <div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,padding:"3px 0"}}>No heuristic alerts for current timeframe.</div>}
+    </div>
+  );
+}
+
 /* ─── RIGHT PANEL ──────────────────────────────────────────────── */
-function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed}){
+function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,setWatchItems,heuristicAlerts,heuristicSummary,watchlistSummary}){
   const [tab,setTab]=useState("monitor");
   const [evFilter,setEvFilter]=useState("ALL");
   const [expanded,setExpanded]=useState(null);
@@ -833,6 +914,14 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed}){
   const filteredTimeline = feed.timeline || [];
   const sourceFeed = feed.sources || [];
   const providerStatuses = orderedProviderStatus(feed.sourceStatuses);
+  const eventWatchMatchById = useMemo(() => {
+    const map = new Map();
+    filteredEvents.forEach((event) => {
+      const matches = matchEventAgainstWatchlist(event, watchItems);
+      if (matches.length > 0) map.set(event.id, matches);
+    });
+    return map;
+  }, [filteredEvents, watchItems]);
 
   return(
     <div style={{display:"flex",flexDirection:"column",gap:10,padding:"10px 12px",overflow:"hidden",minHeight:0}}>
@@ -846,6 +935,16 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed}){
           </div>
         ))}
       </div>
+
+      <WatchlistPanel watchItems={watchItems} setWatchItems={setWatchItems} timeRange={timeRange} watchlistSummary={watchlistSummary}/>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:6}}>
+        <div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:3,padding:"6px 8px"}}><div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:2}}>WATCHLIST</div><div style={{fontSize:9,color:C.text}}>{heuristicSummary.watchMatches} watchlist matches in last {timeRange.label}</div></div>
+        <div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:3,padding:"6px 8px"}}><div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:2}}>MULTI-SOURCE</div><div style={{fontSize:9,color:C.text}}>{heuristicSummary.multiSource} incidents with cross-source corroboration</div></div>
+        <div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:3,padding:"6px 8px"}}><div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:2}}>SPIKE / HIGH</div><div style={{fontSize:9,color:C.text}}>{heuristicSummary.spikes} spike signals · {heuristicSummary.highSeverity} high-severity</div></div>
+      </div>
+
+      <AlertStrip heuristicAlerts={heuristicAlerts}/>
 
       <div ref={tabRowRef} style={{display:"flex",borderBottom:`1px solid ${C.border}`,flexShrink:0,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"thin",padding:"0 2px 3px",gap:4,WebkitOverflowScrolling:"touch"}}>
         {TABS.map(t=>(
@@ -918,8 +1017,9 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed}){
               const labelColor=osintColor(label);
               const providerBadge=providerCategoryStyle(osint.providerCategory);
               const metaBadges=osintMetaBadges(osint);
+              const watchMatches = eventWatchMatchById.get(e.id) || [];
               return(<div key={e.id} onClick={()=>setExpanded(isEx?null:e.id)} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`3px solid ${ec}`,borderRadius:3,padding:"10px 14px",cursor:"pointer"}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{new Date(e.timestamp).toISOString().slice(11,16)} UTC</span><span style={{fontSize:8,color:ec,background:`${ec}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{eventType}</span><span style={{fontSize:7.5,color:labelColor,border:`1px solid ${labelColor}55`,background:`${labelColor}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{label}</span><span style={{fontSize:7.5,color:providerBadge.color,border:`1px solid ${providerBadge.color}55`,background:`${providerBadge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{providerBadge.label}</span>{metaBadges.map((badge)=><span key={`${e.id}-${badge.label}`} style={{fontSize:7,color:badge.color,border:`1px solid ${badge.color}55`,background:`${badge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{badge.label}</span>)}</div><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.region}</span></div>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{new Date(e.timestamp).toISOString().slice(11,16)} UTC</span><span style={{fontSize:8,color:ec,background:`${ec}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{eventType}</span><span style={{fontSize:7.5,color:labelColor,border:`1px solid ${labelColor}55`,background:`${labelColor}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{label}</span><span style={{fontSize:7.5,color:providerBadge.color,border:`1px solid ${providerBadge.color}55`,background:`${providerBadge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{providerBadge.label}</span>{metaBadges.map((badge)=><span key={`${e.id}-${badge.label}`} style={{fontSize:7,color:badge.color,border:`1px solid ${badge.color}55`,background:`${badge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{badge.label}</span>)}{watchMatches.length>0&&<span style={{fontSize:7,color:C.gold,border:`1px solid ${C.gold}55`,background:`${C.gold}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>WATCHLIST MATCH</span>}</div><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.region}</span></div>
                 <div style={{fontSize:11.5,color:C.text,lineHeight:"1.4",marginBottom:isEx?6:0,fontFamily:C.mono}}>{e.title}</div>
                 {isEx&&<><div style={{fontSize:9,color:C.textDim,lineHeight:"1.6",marginBottom:7}}>{e.metadata.detail}</div><div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:7}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>CONF {osint.confidenceScore ?? "--"}%</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>SOURCES {osint.crossSourceCount ?? 1}</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>REL {osint.sourceReliability ?? "--"}%</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>CLUSTER {osint.duplicateClusterId || "N/A"}</span></div>{osint.inferred&&<div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:6}}>Heuristic OSINT signals; verification pending.</div>}<div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:6}}>{(osint.actorTags || []).slice(0,4).map((tag,i)=><span key={`${e.id}-tag-${i}`} style={{fontSize:7.5,color:C.cyan,border:`1px solid ${C.cyan}44`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{tag}</span>)}{(osint.narrativeTags || []).slice(0,3).map((tag,i)=><span key={`${e.id}-narr-${i}`} style={{fontSize:7.5,color:C.purple,border:`1px solid ${C.purple}44`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{tag}</span>)}</div><div style={{display:"flex",flexWrap:"wrap",gap:3}}>{e.metadata.sources?.map((x,i)=><SrcLink key={i} srcKey={x.key} url={x.url} compact/>)}</div></>}
               </div>);
@@ -1114,6 +1214,7 @@ export default function GEOINTv10(){
   const [aiOpen,setAiOpen]=useState(false);
   const [chatOpen,setChatOpen]=useState(false);
   const [timeRange,setTimeRange]=useState(TIME_RANGES[3]);
+  const [watchItems,setWatchItems]=useState(() => DEFAULT_WATCH_TERMS.map((item) => createWatchItem(item)).filter(Boolean));
   const [activeOverlay,setActiveOverlay]=useState("chat");
   const mapShellRef=useRef(null);
   const timezoneWrapRef=useRef(null);
@@ -1122,6 +1223,14 @@ export default function GEOINTv10(){
   const demoInput = useMemo(() => ({ alerts: ALERTS, events: EVENTS, timeline: TIMELINE, trajectories: TRAJECTORIES, sources: SOURCES }), []);
   const { mode: dataMode, statusNote, feed } = useGeoFeed({ demoInput, refreshMs: 45000 });
   const filteredFeed = useFilteredGeoFeed({ feed, timeRangeHours: timeRange.hours });
+  const heuristicAlerts = useMemo(() => buildHeuristicAlerts({
+    events: filteredFeed.events,
+    feedAlerts: filteredFeed.alerts,
+    watchItems,
+    timeRangeHours: timeRange.hours,
+  }), [filteredFeed.events, filteredFeed.alerts, watchItems, timeRange.hours]);
+  const heuristicSummary = useMemo(() => summarizeHeuristicAlerts({ heuristicAlerts, watchItems }), [heuristicAlerts, watchItems]);
+  const watchlistSummary = useMemo(() => buildWatchlistSummary({ events: filteredFeed.events, watchItems }), [filteredFeed.events, watchItems]);
 
   useEffect(()=>{const t=setInterval(()=>setBlink(b=>!b),900);return()=>clearInterval(t);},[]);
   useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t);},[]);
@@ -1214,7 +1323,7 @@ export default function GEOINTv10(){
           </div>
 
           <div style={{flex:1,minHeight:0,overflow:"hidden"}}>
-            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed}/>
+            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed} watchItems={watchItems} setWatchItems={setWatchItems} heuristicAlerts={heuristicAlerts} heuristicSummary={heuristicSummary} watchlistSummary={watchlistSummary}/>
           </div>
         </main>
       </div>
