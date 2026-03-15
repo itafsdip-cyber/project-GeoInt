@@ -626,7 +626,7 @@ function ChatRoom({compact=false, onClose}){
         <div style={{display:"flex",alignItems:"center",gap:6}}>
           <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>AI ASSIST</span>
           <button onClick={()=>setAiOn(v=>!v)} style={{background:aiOn?`${C.cyan}1a`:"none",border:`1px solid ${aiOn?C.cyan:C.border}`,color:aiOn?C.cyan:C.textDim,padding:"2px 8px",borderRadius:2,fontFamily:C.mono,fontSize:8,cursor:"pointer"}}>{aiOn?"ON":"OFF"}</button>
-          {onClose&&<button onClick={onClose} style={{background:"none",border:`1px solid ${C.border}`,color:C.textDim,padding:"2px 8px",borderRadius:2,cursor:"pointer"}}>✕</button>}
+          {onClose&&!compact&&<button onClick={onClose} style={{background:"none",border:`1px solid ${C.border}`,color:C.textDim,padding:"2px 8px",borderRadius:2,cursor:"pointer"}}>✕</button>}
         </div>
       </div>
 
@@ -939,8 +939,8 @@ function GlobalSearch({onClose}){
 
 
 function ControlIcon({type}){
-  if(type==="ai") return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="7" width="14" height="10" rx="2"/><path d="M9 12h.01M15 12h.01"/><path d="M9 15h6"/><path d="M12 3v3"/><path d="M8.5 4.5h7"/></svg>;
-  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8"/><path d="M8 13h6"/></svg>;
+  if(type==="ai") return <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.cyan} strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="7" width="14" height="10" rx="2"/><path d="M9 12h.01M15 12h.01"/><path d="M9 15h6"/><path d="M12 3v3"/><path d="M8.5 4.5h7"/></svg>;
+  return <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.cyan} strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8"/><path d="M8 13h6"/></svg>;
 }
 
 function DraggablePanel({children,title,onClose,boundsRef,initialPosition,zIndex,width,maxWidth,height}){
@@ -948,7 +948,29 @@ function DraggablePanel({children,title,onClose,boundsRef,initialPosition,zIndex
   const [pos,setPos]=useState(initialPosition);
   const drag=useRef({active:false,startX:0,startY:0,baseX:0,baseY:0});
 
+  const clampToBounds = () => {
+    const b = boundsRef.current?.getBoundingClientRect();
+    const p = panelRef.current?.getBoundingClientRect();
+    if (!b || !p) return;
+    const maxX = Math.max(8, b.width - p.width - 8);
+    const maxY = Math.max(8, b.height - p.height - 8);
+    setPos((prev) => ({
+      left: Math.min(maxX, Math.max(8, prev.left)),
+      top: Math.min(maxY, Math.max(8, prev.top)),
+    }));
+  };
+
   useEffect(()=>{setPos(initialPosition);},[initialPosition.left,initialPosition.top]);
+
+  useEffect(() => {
+    const id = requestAnimationFrame(clampToBounds);
+    return () => cancelAnimationFrame(id);
+  }, [initialPosition.left, initialPosition.top]);
+
+  useEffect(() => {
+    window.addEventListener("resize", clampToBounds);
+    return () => window.removeEventListener("resize", clampToBounds);
+  }, []);
 
   useEffect(()=>{
     const move=(e)=>{
@@ -991,6 +1013,7 @@ export default function GEOINTv10(){
   const [timeRange,setTimeRange]=useState(TIME_RANGES[3]);
   const [activeOverlay,setActiveOverlay]=useState("chat");
   const mapShellRef=useRef(null);
+  const timezoneWrapRef=useRef(null);
   const usedTickers=useRef(new Set());
 
   const demoInput = useMemo(() => ({ alerts: ALERTS, events: EVENTS, timeline: TIMELINE, trajectories: TRAJECTORIES, sources: SOURCES }), []);
@@ -1003,6 +1026,15 @@ export default function GEOINTv10(){
     const h=e=>{if(e.key==="/"||((e.ctrlKey||e.metaKey)&&e.key==="k")){e.preventDefault();setSearch(true);} if(e.key==="Escape"){setAiOpen(false);setChatOpen(false);setTzOpen(false);}};
     window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);
   },[]);
+
+  useEffect(() => {
+    const closeTimezoneOnOutsideClick = (event) => {
+      if (!tzOpen) return;
+      if (!timezoneWrapRef.current?.contains(event.target)) setTzOpen(false);
+    };
+    window.addEventListener("pointerdown", closeTimezoneOnOutsideClick);
+    return () => window.removeEventListener("pointerdown", closeTimezoneOnOutsideClick);
+  }, [tzOpen]);
 
   useEffect(()=>{
     const t=setInterval(()=>{
@@ -1055,7 +1087,7 @@ export default function GEOINTv10(){
             <div style={{display:"flex",gap:4,alignItems:"center"}}>{[C.green,"#26c970",C.gold,C.orange,C.red].map((c,i)=><div key={i} style={{width:12,height:12,borderRadius:"50%",background:c,opacity:i===4&&!blink?0.35:1,transition:"opacity 0.2s"}}/>)}<span style={{color:C.red,fontSize:10,letterSpacing:2,fontFamily:C.mono,marginLeft:5,fontWeight:"bold"}}>SEVERE</span></div>
             <div style={{display:"flex",alignItems:"center",gap:8,position:"relative",zIndex:1200}}>
               <span style={{color:C.textDim,fontSize:10,fontFamily:C.mono,padding:"4px 8px",background:"rgba(255,255,255,0.02)",border:`1px solid ${C.border}`,borderRadius:3,whiteSpace:"nowrap"}}>{fmtTime()}</span>
-              <div style={{position:"relative"}}>
+              <div ref={timezoneWrapRef} style={{position:"relative"}}>
                 <button onClick={()=>setTzOpen(v=>!v)} style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${C.border}`,color:C.textDim,padding:"5px 9px",borderRadius:3,fontSize:9,fontFamily:C.mono,cursor:"pointer",whiteSpace:"nowrap"}}>TZ: {timezone.label}</button>
                 {tzOpen&&<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",zIndex:1800,background:"rgba(8,12,18,0.98)",border:`1px solid ${C.border}`,borderRadius:4,minWidth:180,overflow:"hidden",boxShadow:"0 14px 24px rgba(0,0,0,0.5)"}}>{TIMEZONES.map(t=><button key={t.id} onClick={()=>{setTimezone(t);setTzOpen(false);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 10px",background:timezone.id===t.id?`${C.cyan}14`:"none",border:"none",borderBottom:`1px solid ${C.border}`,color:timezone.id===t.id?C.cyan:C.textDim,fontSize:9,fontFamily:C.mono,cursor:"pointer"}}>{t.label}</button>)}</div>}
               </div>
@@ -1069,8 +1101,8 @@ export default function GEOINTv10(){
           <div ref={mapShellRef} style={{height:"56%",minHeight:320,borderBottom:`1px solid ${C.border}`,position:"relative",isolation:"isolate"}}>
             <MapView selected={selected} setSelected={setSelected} visibleTrajectories={filteredFeed.trajectories}/>
             <div style={{position:"absolute",right:12,bottom:92,zIndex:500,display:"flex",flexDirection:"column",gap:8}}>
-              <button onClick={()=>{setAiOpen(v=>!v);setActiveOverlay("ai");}} style={floatingBtn} title="AI Analysis"><ControlIcon type="ai"/></button>
-              <button onClick={()=>{setChatOpen(v=>!v);setActiveOverlay("chat");}} style={floatingBtn} title="Live Chat"><ControlIcon type="chat"/></button>
+              <button aria-label="Open AI analysis panel" onClick={()=>{setAiOpen(v=>!v);setActiveOverlay("ai");}} style={floatingBtn} title="AI Analysis"><ControlIcon type="ai"/></button>
+              <button aria-label="Open live chat panel" onClick={()=>{setChatOpen(v=>!v);setActiveOverlay("chat");}} style={floatingBtn} title="Live Chat"><ControlIcon type="chat"/></button>
             </div>
 
             {aiOpen&&<DraggablePanel boundsRef={mapShellRef} initialPosition={{top:12,left:Math.max(10,(mapShellRef.current?.clientWidth||1000)-420)}} zIndex={activeOverlay==="ai"?650:630} width={390} maxWidth="40vw" height="76%" title="AI ANALYSIS PANEL" onClose={()=>setAiOpen(false)}><div onPointerDown={()=>setActiveOverlay("ai")} style={{height:"100%"}}><AIPanel/></div></DraggablePanel>}

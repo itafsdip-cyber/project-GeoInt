@@ -9,7 +9,12 @@ function hasActiveSource(sourceStatuses = {}) {
 
 function summarizeSources(sourceStatuses = {}) {
   return Object.values(sourceStatuses)
-    .map((status) => `${status.provider.toUpperCase()}: ${status.state}${status.reason ? ` (${status.reason})` : ''}`)
+    .filter(Boolean)
+    .map((status) => {
+      const provider = String(status.provider || 'unknown').toUpperCase();
+      const state = String(status.state || 'unknown');
+      return `${provider}: ${state}${status.reason ? ` (${status.reason})` : ''}`;
+    })
     .join(' · ');
 }
 
