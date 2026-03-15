@@ -11,11 +11,19 @@ function parseList(value, fallback = []) {
 
 function parseFeeds(value) {
   const feeds = parseList(value);
-  return feeds.map((feedUrl, index) => ({
-    id: `rss-${index + 1}`,
-    url: feedUrl,
-    label: new URL(feedUrl).hostname,
-  }));
+  return feeds
+    .map((feedUrl, index) => {
+      try {
+        return {
+          id: `rss-${index + 1}`,
+          url: feedUrl,
+          label: new URL(feedUrl).hostname,
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
 }
 
 function boolFromEnv(value, defaultValue = true) {

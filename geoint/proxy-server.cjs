@@ -47,9 +47,9 @@ function dedupeById(events) {
 
 function toFeed(events, sourceStatuses) {
   const ordered = [...events].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-  const alerts = ordered.filter((event) => event.severity === 'high').slice(0, 40);
+  const alerts = ordered.filter((event) => event.severity === 'high' || event.severity === 'critical').slice(0, 40);
   const timeline = ordered.slice(0, 120);
-  const sourceCards = Object.values(sourceStatuses).map((status) => ({
+  const sourceCards = Object.values(sourceStatuses).filter(Boolean).map((status) => ({
     id: `source-${status.provider}`,
     type: 'source',
     category: 'source',
@@ -88,9 +88,25 @@ async function refreshProvider(providerKey, fetcher, config) {
   const now = Date.now();
   if (providerState.nextPollAt > now && providerState.status) return;
 
-  const result = await fetcher(config);
-  providerState.events = result.events;
-  providerState.status = result.status;
+  try {
+    const result = await fetcher(config);
+    providerState.events = Array.isArray(result.events) ? result.events : [];
+    providerState.status = result.status || {
+      provider: providerKey,
+      state: 'error',
+      reason: 'No status returned',
+      checkedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    providerState.events = [];
+    providerState.status = {
+      provider: providerKey,
+      state: 'error',
+      reason: 'Connector failed',
+      lastError: error.message,
+      checkedAt: new Date().toISOString(),
+    };
+  }
   providerState.nextPollAt = now + config.refreshMs;
 }
 
@@ -110,10 +126,10 @@ async function getNormalizedEventsPayload() {
   ]);
 
   const sourceStatuses = {
-    gdelt: state.byProvider.gdelt.status,
-    reddit: state.byProvider.reddit.status,
-    x: state.byProvider.x.status,
-    rss: state.byProvider.rss.status,
+    gdelt: state.byProvider.gdelt.status || { provider: 'gdelt', state: 'unavailable', reason: 'No status reported', checkedAt: new Date().toISOString() },
+    reddit: state.byProvider.reddit.status || { provider: 'reddit', state: 'unavailable', reason: 'No status reported', checkedAt: new Date().toISOString() },
+    x: state.byProvider.x.status || { provider: 'x', state: 'unavailable', reason: 'No status reported', checkedAt: new Date().toISOString() },
+    rss: state.byProvider.rss.status || { provider: 'rss', state: 'unavailable', reason: 'No status reported', checkedAt: new Date().toISOString() },
   };
 
   return toFeed(events, sourceStatuses);
