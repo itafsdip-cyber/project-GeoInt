@@ -1,3 +1,5 @@
+import { enrichEventGeolocation } from "./geolocation";
+
 export const DATA_MODE = {
   DEMO: "DEMO",
   LIVE: "LIVE",
@@ -32,6 +34,9 @@ const MS_PER_HOUR = 3600000;
  * @property {string} timestamp
  * @property {number|null} latitude
  * @property {number|null} longitude
+ * @property {number} locationConfidence
+ * @property {"provider_coordinates"|"text_inference"|"unknown"} geolocationSource
+ * @property {"exact"|"city"|"region"|"country"|"unknown"} geolocationPrecision
  * @property {"critical"|"high"|"medium"|"low"} severity
  * @property {"verified"|"unverified"|"pending"} verificationStatus
  * @property {string} region
@@ -158,13 +163,26 @@ const buildClusters = (events = []) => {
 };
 
 export function enrichEventsWithOsint(events = [], generatedAt = new Date().toISOString()) {
-  const clusters = buildClusters(events);
+  const geolocatedEvents = events.map((event) => {
+    const geolocation = enrichEventGeolocation(event);
+    return {
+      ...event,
+      ...geolocation,
+      metadata: {
+        ...(event.metadata || {}),
+        geolocationInferred: geolocation.inferred,
+        inferredRegion: geolocation.inferredRegion,
+      },
+    };
+  });
+
+  const clusters = buildClusters(geolocatedEvents);
   const clusterByEventId = new Map();
   clusters.forEach((cluster) => {
     cluster.eventIds.forEach((id) => clusterByEventId.set(id, cluster));
   });
 
-  return events.map((event) => {
+  return geolocatedEvents.map((event) => {
     const cluster = clusterByEventId.get(event.id) || null;
     const crossSourceCount = cluster ? Math.max(1, cluster.sourceSet.size) : 1;
     const providerCategory = inferProviderType(event);
@@ -187,8 +205,8 @@ export function enrichEventsWithOsint(events = [], generatedAt = new Date().toIS
     );
 
     const locationConfidence = hasCoordinates
-      ? Math.min(94, sourceReliability + (crossSourceCount > 1 ? 10 : 4))
-      : Math.max(30, sourceReliability - 20);
+      ? Math.min(96, Math.round((event.locationConfidence || 0) * 0.72 + sourceReliability * 0.28 + (crossSourceCount > 1 ? 4 : 0)))
+      : Math.max(0, event.locationConfidence || 0);
 
     return {
       ...event,

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { DATA_MODE, osintLabel } from "./services/data/normalizedEventModel";
 import { useGeoFeed, useFilteredGeoFeed } from "./services/data/liveDataService";
 import { orderedProviderStatus } from "./services/data/connectors/sourceRegistry";
+import { clusterEventsForZoom, precisionRadiusKm } from "./services/data/mapClustering";
 
 /* ═══════════════════════════════════════════════════════════════════
    GEOINT v10 — pixel-perfect UI match to reference screenshot
@@ -267,7 +268,7 @@ function Ticker({items}){
 }
 
 /* ─── MAP VIEW — Leaflet + Canvas trajectory overlay ───────────── */
-function MapView({selected,setSelected,visibleTrajectories}){
+function MapView({selected,setSelected,visibleTrajectories,visibleEvents}){
   const trajectoryItems = visibleTrajectories.map((item) => ({
     ...(item.metadata || item),
     osint: item.osint || item.metadata?.osint || null,
@@ -280,6 +281,8 @@ function MapView({selected,setSelected,visibleTrajectories}){
   const [selTraj,setSelTraj] = useState(null);
   const showRef   = useRef(true);
   const filterRef = useRef("ALL");
+  const eventLayerRef = useRef(null);
+  const [selectedGeoItem, setSelectedGeoItem] = useState(null);
 
   useEffect(()=>{
     if(leafRef.current) return;
@@ -411,8 +414,75 @@ function MapView({selected,setSelected,visibleTrajectories}){
     };
   },[]);
 
+  useEffect(() => {
+    const map = leafRef.current;
+    const L = window.L;
+    if (!map || !L) return undefined;
+
+    if (!eventLayerRef.current) {
+      eventLayerRef.current = L.layerGroup().addTo(map);
+    }
+
+    const layerGroup = eventLayerRef.current;
+
+    const renderClusters = () => {
+      layerGroup.clearLayers();
+      const clusters = clusterEventsForZoom(visibleEvents || [], map.getZoom());
+
+      clusters.forEach((cluster) => {
+        const isApproximate = cluster.events.some((event) => event.geolocationPrecision !== "exact");
+        const markerColor = cluster.isCluster ? C.cyan : (cluster.avgLocationConfidence >= 70 ? C.green : C.orange);
+        const size = cluster.isCluster ? Math.min(30, 16 + cluster.count * 2.2) : (cluster.avgLocationConfidence >= 70 ? 4.8 : 6.2);
+
+        if (cluster.isCluster) {
+          const clusterIcon = L.divIcon({
+            className: "",
+            iconSize: [size, size],
+            iconAnchor: [size / 2, size / 2],
+            html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${markerColor}d0;border:1px solid ${markerColor};box-shadow:0 0 0 3px ${markerColor}30;color:#051018;display:flex;align-items:center;justify-content:center;font-family:'Share Tech Mono',monospace;font-size:10px;font-weight:700;">${cluster.count}</div>`,
+          });
+
+          L.marker([cluster.latitude, cluster.longitude], { icon: clusterIcon })
+            .on("click", () => setSelectedGeoItem({ type: "cluster", cluster }))
+            .addTo(layerGroup);
+          return;
+        }
+
+        const event = cluster.events[0];
+        if (!event) return;
+
+        L.circleMarker([event.latitude, event.longitude], {
+          radius: size,
+          color: markerColor,
+          weight: 1,
+          fillColor: markerColor,
+          fillOpacity: isApproximate ? 0.36 : 0.85,
+        })
+          .on("click", () => setSelectedGeoItem({ type: "event", event }))
+          .addTo(layerGroup);
+
+        if (isApproximate) {
+          const radiusKm = precisionRadiusKm(event.geolocationPrecision);
+          if (radiusKm > 0) {
+            L.circle([event.latitude, event.longitude], {
+              radius: radiusKm * 1000,
+              color: `${markerColor}99`,
+              weight: 1,
+              fillOpacity: 0.06,
+              dashArray: "3 4",
+            }).addTo(layerGroup);
+          }
+        }
+      });
+    };
+
+    renderClusters();
+    map.on("zoomend", renderClusters);
+    return () => map.off("zoomend", renderClusters);
+  }, [visibleEvents]);
+
   /* legend items — exactly matching screenshot */
-  const legend=[["hostile",C.red,"HOSTILE"],["threat",C.orange,"ACTIVE THREAT"],["ally",C.cyan,"ALLIED"],["monitor",C.gold,"MONITOR"]];
+  const legend=[["hostile",C.red,"HOSTILE"],["threat",C.orange,"ACTIVE THREAT"],["ally",C.cyan,"ALLIED"],["monitor",C.gold,"MONITOR"],["event",C.green,"HIGH CONF EVENT"],["approx",C.orange,"APPROX LOC"]];
 
   return(
     <div style={{height:"100%",display:"flex",flexDirection:"column",position:"relative"}}>
@@ -425,7 +495,7 @@ function MapView({selected,setSelected,visibleTrajectories}){
         <div style={{position:"absolute",top:10,left:10,zIndex:600,background:"rgba(10,14,22,0.82)",border:`1px solid ${C.border}`,borderRadius:3,padding:"8px 12px",backdropFilter:"blur(4px)"}}>
           {legend.map(([t,c,l])=>(
             <div key={t} style={{display:"flex",alignItems:"center",gap:7,marginBottom:4,lastChild:{marginBottom:0}}}>
-              <div style={{width:9,height:9,borderRadius:"50%",background:c,flexShrink:0}}/>
+              <div style={{width:9,height:9,borderRadius:t==="approx"?2:"50%",background:c,opacity:t==="approx"?0.55:1,flexShrink:0}}/>
               <span style={{fontSize:9,color:C.textDim,fontFamily:C.mono,letterSpacing:0.5}}>{l}</span>
             </div>
           ))}
@@ -466,6 +536,13 @@ function MapView({selected,setSelected,visibleTrajectories}){
           </div>
         )}
       </div>
+
+
+      {selectedGeoItem&&(
+        <div style={{background:"rgba(8,12,20,0.95)",border:`1px solid ${C.cyan}44`,borderTop:`1px solid ${C.border}`,padding:"7px 12px",flexShrink:0}}>
+          {selectedGeoItem.type==="event"?(()=>{const e=selectedGeoItem.event;const label=osintLabel(e.osint||{});const labelColor=osintColor(label);return(<><div style={{display:"flex",justifyContent:"space-between",gap:8,marginBottom:3}}><span style={{fontSize:10,color:C.text,fontWeight:600}}>{e.title}</span><button onClick={()=>setSelectedGeoItem(null)} style={{background:"none",border:"none",color:C.textDim,cursor:"pointer",fontSize:11}}>✕</button></div><div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}><span style={{fontSize:7,color:C.cyan,fontFamily:C.mono}}>{e.source}</span><span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>{new Date(e.timestamp).toISOString().replace("T"," ").slice(0,16)}Z</span><span style={{fontSize:7,color:labelColor,border:`1px solid ${labelColor}55`,background:`${labelColor}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{label}</span><span style={{fontSize:7,color:C.gold,border:`1px solid ${C.gold}55`,background:`${C.gold}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{String(e.geolocationPrecision || "unknown").toUpperCase()}</span><span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>LOC {e.osint?.locationConfidence || e.locationConfidence || 0}% · {e.region}</span></div></>);})():(()=>{const c=selectedGeoItem.cluster;const first=c.events[0];return(<><div style={{display:"flex",justifyContent:"space-between",gap:8,marginBottom:3}}><span style={{fontSize:10,color:C.cyan,fontWeight:600}}>Cluster of {c.count} reports</span><button onClick={()=>setSelectedGeoItem(null)} style={{background:"none",border:"none",color:C.textDim,cursor:"pointer",fontSize:11}}>✕</button></div><div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:3}}><span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>SOURCES: {c.sources.join(", ")}</span><span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>AVG LOC {c.avgLocationConfidence}%</span><span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>AREA: {first?.region || "Unknown"}</span></div><div style={{fontSize:8.5,color:C.textDim,lineHeight:1.45}}>{c.events.slice(0,2).map((event)=>event.title).join(" • ")}{c.events.length>2?` • +${c.events.length-2} more`:""}</div></>);})()}
+        </div>
+      )}
 
       {/* Country detail — below map, only when a marker is selected */}
       {selected&&(
@@ -1125,7 +1202,7 @@ export default function GEOINTv10(){
 
         <main style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
           <div ref={mapShellRef} style={{height:"56%",minHeight:320,borderBottom:`1px solid ${C.border}`,position:"relative",isolation:"isolate"}}>
-            <MapView selected={selected} setSelected={setSelected} visibleTrajectories={filteredFeed.trajectories}/>
+            <MapView selected={selected} setSelected={setSelected} visibleTrajectories={filteredFeed.trajectories} visibleEvents={filteredFeed.events}/>
             <div style={{position:"absolute",right:12,bottom:92,zIndex:500,display:"flex",flexDirection:"column",gap:8}}>
               <button aria-label="Open AI analysis panel" onClick={()=>{setAiOpen(v=>!v);setActiveOverlay("ai");}} style={floatingBtn} title="AI Analysis"><ControlIcon type="ai"/></button>
               <button aria-label="Open live chat panel" onClick={()=>{setChatOpen(v=>!v);setActiveOverlay("chat");}} style={floatingBtn} title="Live Chat"><ControlIcon type="chat"/></button>
