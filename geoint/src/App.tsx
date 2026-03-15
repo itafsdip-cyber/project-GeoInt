@@ -26,6 +26,28 @@ const TIMEZONES = [
   { id: "newyork", label: "New York", zone: "America/New_York" },
 ];
 
+const TIME_RANGES = [
+  { id: "1h", label: "1H", hours: 1 },
+  { id: "6h", label: "6H", hours: 6 },
+  { id: "12h", label: "12H", hours: 12 },
+  { id: "24h", label: "24H", hours: 24 },
+  { id: "7d", label: "7D", hours: 24 * 7 },
+];
+
+const DEMO_CLOCK_UTC = new Date("2026-03-10T04:30:00.000Z");
+
+const withDemoTimestamps = (items, spacingHours = 1.5, startOffsetHours = 0) =>
+  items.map((item, index) => ({
+    ...item,
+    occurredAt: new Date(DEMO_CLOCK_UTC.getTime() - ((startOffsetHours + index * spacingHours) * 3600000)).toISOString(),
+    dataMode: "demo",
+  }));
+
+const filterByTimeRange = (items, rangeHours) => {
+  const cutoff = DEMO_CLOCK_UTC.getTime() - rangeHours * 3600000;
+  return items.filter((item) => new Date(item.occurredAt).getTime() >= cutoff);
+};
+
 /* ─── DATA ─────────────────────────────────────────────────────── */
 const SOURCES = {
   "Reuters":       {name:"Reuters",               url:"https://reuters.com",        credibility:98,bias:"Center",  type:"Wire"},
@@ -247,7 +269,7 @@ function Ticker({items}){
 }
 
 /* ─── MAP VIEW — Leaflet + Canvas trajectory overlay ───────────── */
-function MapView({selected,setSelected}){
+function MapView({selected,setSelected,timeRangeHours}){
   const mapRef    = useRef(null);
   const leafRef   = useRef(null);
   const canvasRef = useRef(null);
@@ -256,7 +278,7 @@ function MapView({selected,setSelected}){
   const [selTraj,setSelTraj] = useState(null);
   const showRef   = useRef(true);
   const filterRef = useRef("ALL");
-  const [,forceRender] = useState(0);
+  const visibleTrajectories = useMemo(() => filterByTimeRange(withDemoTimestamps(TRAJECTORIES, 0.8, 0.4), timeRangeHours), [timeRangeHours]);
 
   useEffect(()=>{
     if(leafRef.current) return;
@@ -347,7 +369,7 @@ function MapView({selected,setSelected}){
         const ctx=canvas.getContext("2d");
         ctx.clearRect(0,0,canvas.width,canvas.height);
         if(showRef.current){
-          TRAJECTORIES.forEach(tr=>{
+          visibleTrajectories.forEach(tr=>{
             if(filterRef.current!=="ALL"&&tr.type!==filterRef.current) return;
             if(!progRef.current[tr.id]) progRef.current[tr.id]=Math.random()*0.5;
             progRef.current[tr.id]+=tr.speed;
@@ -411,7 +433,7 @@ function MapView({selected,setSelected}){
         {/* Trajectory overlay list — small, top right */}
         {showRef.current&&(
           <div style={{position:"absolute",top:8,right:8,zIndex:600,display:"flex",flexDirection:"column",gap:2}}>
-            {TRAJECTORIES.filter(t=>filterRef.current==="ALL"||t.type===filterRef.current).slice(0,5).map(tr=>(
+            {visibleTrajectories.filter(t=>filterRef.current==="ALL"||t.type===filterRef.current).slice(0,5).map(tr=>(
               <div key={tr.id} onClick={()=>setSelTraj(s=>s?.id===tr.id?null:tr)}
                 style={{background:"rgba(6,10,20,0.88)",border:`1px solid ${tr.intercepted?C.green:tr.color}44`,borderLeft:`2px solid ${tr.intercepted?C.green:tr.color}`,borderRadius:2,padding:"2px 6px",cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
                 <div style={{width:5,height:5,borderRadius:"50%",background:tr.color,flexShrink:0}}/>
@@ -419,6 +441,7 @@ function MapView({selected,setSelected}){
                 <span style={{fontSize:7,color:tr.intercepted?C.green:C.red,fontFamily:C.mono,marginLeft:"auto"}}>{tr.intercepted?"✓":"●"}</span>
               </div>
             ))}
+            {visibleTrajectories.length===0&&<div style={{background:"rgba(6,10,20,0.88)",border:`1px solid ${C.border}`,borderRadius:2,padding:"4px 8px",fontSize:8,color:C.textDim,fontFamily:C.mono}}>No trajectories in selected range</div>}
           </div>
         )}
 
@@ -646,7 +669,7 @@ function ChatRoom({compact=false, onClose}){
 }
 
 /* ─── RIGHT PANEL ──────────────────────────────────────────────── */
-function RightPanel(){
+function RightPanel({timeRange,setTimeRange}){
   const [tab,setTab]=useState("monitor");
   const [evFilter,setEvFilter]=useState("ALL");
   const [expanded,setExpanded]=useState(null);
@@ -721,29 +744,37 @@ function RightPanel(){
 
   const IC={PROXY:C.orange,ALLIANCE:C.green,SECURITY:C.green,FINANCIAL:C.gold,LEVERAGE:C.red,ECONOMIC:C.cyan,MILITARY:C.orange};
 
+  const alertsData = useMemo(() => withDemoTimestamps(liveAlerts, 1.2, 0.2), [liveAlerts]);
+  const filteredAlerts = useMemo(() => filterByTimeRange(alertsData, timeRange.hours), [alertsData, timeRange]);
+  const eventsData = useMemo(() => withDemoTimestamps(EVENTS, 2.1, 0.1), []);
+  const filteredEvents = useMemo(() => filterByTimeRange(eventsData, timeRange.hours), [eventsData, timeRange]);
+
   return(
-    <div style={{display:"flex",flexDirection:"column",gap:14,padding:"14px",overflow:"hidden",minHeight:0}}>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:10}}>
+    <div style={{display:"flex",flexDirection:"column",gap:10,padding:"10px 12px",overflow:"hidden",minHeight:0}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8,alignItems:"stretch"}}>
         {STATS.map((s,i)=>(
-          <div key={i} style={{background:C.panel,border:`1px solid ${C.border}`,borderTop:`2px solid ${s.c}`,borderRadius:4,padding:"12px 14px"}}>
-            <div style={{fontSize:30,color:s.c,fontFamily:C.mono,fontWeight:"bold",lineHeight:1.05}}>{s.v}</div>
-            <div style={{fontSize:8,color:C.textDim,letterSpacing:1.1,marginTop:5,textTransform:"uppercase"}}>{s.l}</div>
+          <div key={i} style={{background:C.panel,border:`1px solid ${C.border}`,borderTop:`2px solid ${s.c}`,borderRadius:4,padding:"8px 10px",minHeight:86}}>
+            <div style={{fontSize:22,color:s.c,fontFamily:C.mono,fontWeight:"bold",lineHeight:1.05}}>{s.v}</div>
+            <div style={{fontSize:8,color:C.textDim,letterSpacing:1.1,marginTop:3,textTransform:"uppercase"}}>{s.l}</div>
             <div style={{fontSize:8,color:"#3f5268",marginTop:3}}>{s.n}</div>
-            <a href={s.url} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",marginTop:7,display:"inline-flex",gap:3,fontFamily:C.mono}}>⊕ {s.src} ↗</a>
+            <a href={s.url} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",marginTop:5,display:"inline-flex",gap:3,fontFamily:C.mono}}>⊕ {s.src} ↗</a>
           </div>
         ))}
       </div>
 
-      <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+      <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,flexShrink:0,overflowX:"auto",scrollbarWidth:"thin",paddingBottom:2,gap:2}}>
         {TABS.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{background:"none",border:"none",borderBottom:tab===t.id?`2px solid ${C.cyan}`:"2px solid transparent",color:tab===t.id?C.cyan:C.textDim,padding:"9px 14px",fontFamily:C.mono,fontSize:9,letterSpacing:0.5,cursor:"pointer",whiteSpace:"nowrap"}}>{t.l}</button>
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{background:"none",border:"none",borderBottom:tab===t.id?`2px solid ${C.cyan}`:"2px solid transparent",color:tab===t.id?C.cyan:C.textDim,padding:"8px 11px",fontFamily:C.mono,fontSize:9,letterSpacing:0.5,cursor:"pointer",whiteSpace:"nowrap"}}>{t.l}</button>
         ))}
       </div>
 
-      <div style={{flex:1,overflowY:"auto",minHeight:0,paddingRight:4}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}><div style={{display:"flex",gap:6,alignItems:"center",overflowX:"auto",paddingBottom:2}}><span style={{fontSize:8,color:C.textDim,letterSpacing:1,fontFamily:C.mono}}>RANGE</span>{TIME_RANGES.map((r)=><button key={r.id} onClick={()=>setTimeRange(r)} style={{background:timeRange.id===r.id?`${C.cyan}22`:"rgba(255,255,255,0.02)",border:`1px solid ${timeRange.id===r.id?C.cyan:C.border}`,color:timeRange.id===r.id?C.cyan:C.textDim,padding:"4px 9px",fontSize:8,borderRadius:3,cursor:"pointer",fontFamily:C.mono}}>{r.label}</button>)}</div><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>DATA MODE: DEMO SNAPSHOT · LIVE-READY ADAPTER</span></div>
+
+      <div style={{flex:1,overflow:"auto",minHeight:0,paddingRight:4,border:`1px solid ${C.border}`,borderRadius:4,padding:"8px 8px 8px 4px",background:"rgba(5,9,15,0.45)"}}>
         {tab==="monitor"&&(
           <div style={{display:"flex",flexDirection:"column",gap:9}}>
-            {liveAlerts.map(a=>{
+            {filteredAlerts.length===0&&<div style={{padding:"12px",fontSize:9,color:C.textDim,fontFamily:C.mono}}>No monitor alerts in selected range.</div>}
+            {filteredAlerts.map(a=>{
               const col=sevColor(a.sev);
               const isNew=a.id===newAlert;
               return(
@@ -771,7 +802,8 @@ function RightPanel(){
             <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4}}>
               {ET.map(t=>(<button key={t} onClick={()=>setEvFilter(t)} style={{background:evFilter===t?`${C.cyan}18`:"none",border:`1px solid ${evFilter===t?C.cyan:C.border}`,color:evFilter===t?C.cyan:C.textDim,padding:"3px 8px",fontSize:8,borderRadius:2,cursor:"pointer",fontFamily:C.mono}}>{t}</button>))}
             </div>
-            {(evFilter==="ALL"?EVENTS:EVENTS.filter(e=>e.type===evFilter)).map(e=>{
+            {((evFilter==="ALL"?filteredEvents:filteredEvents.filter(e=>e.type===evFilter)).length===0)&&<div style={{padding:"12px",fontSize:9,color:C.textDim,fontFamily:C.mono}}>No events in selected range/filter.</div>}
+            {(evFilter==="ALL"?filteredEvents:filteredEvents.filter(e=>e.type===evFilter)).map(e=>{
               const isEx=expanded===e.id;
               const ec=typeC[e.type]||C.cyan;
               return(<div key={e.id} onClick={()=>setExpanded(isEx?null:e.id)} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`3px solid ${ec}`,borderRadius:3,padding:"10px 14px",cursor:"pointer"}}>
@@ -896,6 +928,46 @@ function GlobalSearch({onClose}){
   );
 }
 
+
+function ControlIcon({type}){
+  if(type==="ai") return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9.5 3.5h5"/><path d="M12 3.5v3"/><rect x="6" y="8" width="12" height="9" rx="2"/><path d="M9 11.5h.01M15 11.5h.01"/><path d="M8.5 15h7"/></svg>;
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 5h16v11H7l-3 3V5z"/><path d="M8 9h8M8 12h5"/></svg>;
+}
+
+function DraggablePanel({children,title,onClose,boundsRef,initialPosition,zIndex,width,maxWidth,height}){
+  const panelRef=useRef(null);
+  const [pos,setPos]=useState(initialPosition);
+  const drag=useRef({active:false,startX:0,startY:0,baseX:0,baseY:0});
+
+  useEffect(()=>{setPos(initialPosition);},[initialPosition.left,initialPosition.top]);
+
+  useEffect(()=>{
+    const move=(e)=>{
+      if(!drag.current.active) return;
+      const b=boundsRef.current?.getBoundingClientRect();
+      const p=panelRef.current?.getBoundingClientRect();
+      if(!b||!p) return;
+      const dx=e.clientX-drag.current.startX;
+      const dy=e.clientY-drag.current.startY;
+      const maxX=Math.max(8,b.width-p.width-8);
+      const maxY=Math.max(8,b.height-p.height-8);
+      setPos({left:Math.min(maxX,Math.max(8,drag.current.baseX+dx)),top:Math.min(maxY,Math.max(8,drag.current.baseY+dy))});
+    };
+    const up=()=>{drag.current.active=false;};
+    window.addEventListener("pointermove",move);
+    window.addEventListener("pointerup",up);
+    return()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};
+  },[boundsRef]);
+
+  return <div ref={panelRef} style={{position:"absolute",left:pos.left,top:pos.top,width,maxWidth,height,zIndex,background:"rgba(5,8,13,0.97)",border:`1px solid ${C.border}`,borderRadius:6,padding:"10px 12px",boxShadow:"0 18px 38px rgba(0,0,0,0.55)",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+    <div onPointerDown={(e)=>{drag.current={active:true,startX:e.clientX,startY:e.clientY,baseX:pos.left,baseY:pos.top};}} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,cursor:"grab",borderBottom:`1px solid ${C.border}`,paddingBottom:8}}>
+      <span style={{fontSize:10,color:C.cyan,letterSpacing:1.6,fontFamily:C.mono}}>{title}</span>
+      <button onClick={onClose} style={{background:"none",border:`1px solid ${C.border}`,color:C.textDim,padding:"2px 8px",borderRadius:3,cursor:"pointer"}}>✕</button>
+    </div>
+    <div style={{flex:1,minHeight:0,overflow:"hidden"}}>{children}</div>
+  </div>;
+}
+
 /* ─── ROOT ─────────────────────────────────────────────────────── */
 export default function GEOINTv10(){
   const [selected,setSelected]=useState(null);
@@ -907,6 +979,9 @@ export default function GEOINTv10(){
   const [timezone,setTimezone]=useState(TIMEZONES[1]);
   const [aiOpen,setAiOpen]=useState(false);
   const [chatOpen,setChatOpen]=useState(false);
+  const [timeRange,setTimeRange]=useState(TIME_RANGES[3]);
+  const [activeOverlay,setActiveOverlay]=useState("chat");
+  const mapShellRef=useRef(null);
   const usedTickers=useRef(new Set());
 
   useEffect(()=>{const t=setInterval(()=>setBlink(b=>!b),900);return()=>clearInterval(t);},[]);
@@ -935,8 +1010,8 @@ export default function GEOINTv10(){
 
   const floatingBtn={
     width:34,height:34,borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center",
-    background:"rgba(8,12,18,0.95)",border:`1px solid ${C.border}`,color:C.text,cursor:"pointer",fontSize:16,
-    boxShadow:"0 2px 8px rgba(0,0,0,0.45)"
+    background:"linear-gradient(180deg, rgba(11,16,25,0.98), rgba(7,11,18,0.96))",border:`1px solid ${C.border}`,color:C.cyan,cursor:"pointer",fontSize:13,
+    boxShadow:"0 4px 14px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(0,229,200,0.12)",transition:"all .15s ease"
   };
 
   return(
@@ -965,31 +1040,33 @@ export default function GEOINTv10(){
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <button onClick={()=>setSearch(true)} style={{display:"flex",alignItems:"center",gap:7,background:"rgba(255,255,255,0.03)",border:`1px solid ${C.border}`,color:C.textDim,padding:"5px 13px",borderRadius:3,fontSize:10,cursor:"pointer",fontFamily:C.mono}}><span style={{fontSize:14}}>⌕</span>SEARCH<span style={{fontSize:8,opacity:0.45,marginLeft:2}}>⌘K</span></button>
             <div style={{display:"flex",gap:4,alignItems:"center"}}>{[C.green,"#26c970",C.gold,C.orange,C.red].map((c,i)=><div key={i} style={{width:12,height:12,borderRadius:"50%",background:c,opacity:i===4&&!blink?0.35:1,transition:"opacity 0.2s"}}/>)}<span style={{color:C.red,fontSize:10,letterSpacing:2,fontFamily:C.mono,marginLeft:5,fontWeight:"bold"}}>SEVERE</span></div>
-            <div style={{position:"relative"}}>
-              <button onClick={()=>setTzOpen(v=>!v)} style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${C.border}`,color:C.textDim,padding:"5px 9px",borderRadius:3,fontSize:9,fontFamily:C.mono,cursor:"pointer"}}>TZ: {timezone.label}</button>
-              {tzOpen&&<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",zIndex:40,background:C.panel,border:`1px solid ${C.border}`,borderRadius:3,minWidth:150,overflow:"hidden"}}>{TIMEZONES.map(t=><button key={t.id} onClick={()=>{setTimezone(t);setTzOpen(false);}} style={{display:"block",width:"100%",textAlign:"left",padding:"7px 9px",background:timezone.id===t.id?`${C.cyan}14`:"none",border:"none",borderBottom:`1px solid ${C.border}`,color:timezone.id===t.id?C.cyan:C.textDim,fontSize:9,fontFamily:C.mono,cursor:"pointer"}}>{t.label}</button>)}</div>}
+            <div style={{display:"flex",alignItems:"center",gap:8,position:"relative",zIndex:1200}}>
+              <span style={{color:C.textDim,fontSize:10,fontFamily:C.mono,padding:"4px 8px",background:"rgba(255,255,255,0.02)",border:`1px solid ${C.border}`,borderRadius:3,whiteSpace:"nowrap"}}>{fmtTime()}</span>
+              <div style={{position:"relative"}}>
+                <button onClick={()=>setTzOpen(v=>!v)} style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${C.border}`,color:C.textDim,padding:"5px 9px",borderRadius:3,fontSize:9,fontFamily:C.mono,cursor:"pointer",whiteSpace:"nowrap"}}>TZ: {timezone.label}</button>
+                {tzOpen&&<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",zIndex:1800,background:"rgba(8,12,18,0.98)",border:`1px solid ${C.border}`,borderRadius:4,minWidth:180,overflow:"hidden",boxShadow:"0 14px 24px rgba(0,0,0,0.5)"}}>{TIMEZONES.map(t=><button key={t.id} onClick={()=>{setTimezone(t);setTzOpen(false);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 10px",background:timezone.id===t.id?`${C.cyan}14`:"none",border:"none",borderBottom:`1px solid ${C.border}`,color:timezone.id===t.id?C.cyan:C.textDim,fontSize:9,fontFamily:C.mono,cursor:"pointer"}}>{t.label}</button>)}</div>}
+              </div>
             </div>
-            <span style={{color:C.textDim,fontSize:10,fontFamily:C.mono}}>{fmtTime()}</span>
           </div>
         </header>
 
         <Ticker items={tickerItems}/>
 
         <main style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
-          <div style={{height:"56%",minHeight:320,borderBottom:`1px solid ${C.border}`,position:"relative"}}>
-            <MapView selected={selected} setSelected={setSelected}/>
+          <div ref={mapShellRef} style={{height:"56%",minHeight:320,borderBottom:`1px solid ${C.border}`,position:"relative",isolation:"isolate"}}>
+            <MapView selected={selected} setSelected={setSelected} timeRangeHours={timeRange.hours}/>
             <div style={{position:"absolute",right:12,bottom:92,zIndex:500,display:"flex",flexDirection:"column",gap:8}}>
-              <button onClick={()=>setAiOpen(v=>!v)} style={floatingBtn} title="AI Analysis">🧠</button>
-              <button onClick={()=>setChatOpen(v=>!v)} style={floatingBtn} title="Live Chat">💬</button>
+              <button onClick={()=>{setAiOpen(v=>!v);setActiveOverlay("ai");}} style={floatingBtn} title="AI Analysis"><ControlIcon type="ai"/></button>
+              <button onClick={()=>{setChatOpen(v=>!v);setActiveOverlay("chat");}} style={floatingBtn} title="Live Chat"><ControlIcon type="chat"/></button>
             </div>
 
-            {aiOpen&&<div style={{position:"absolute",top:12,right:58,width:390,maxWidth:"40vw",height:"76%",zIndex:520,background:"rgba(5,8,13,0.96)",border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px",boxShadow:"0 10px 30px rgba(0,0,0,0.45)",display:"flex",flexDirection:"column"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><span style={{fontSize:10,color:C.cyan,letterSpacing:2,fontFamily:C.mono}}>AI ANALYSIS PANEL</span><button onClick={()=>setAiOpen(false)} style={{background:"none",border:`1px solid ${C.border}`,color:C.textDim,padding:"2px 8px",borderRadius:2,cursor:"pointer"}}>✕</button></div><div style={{flex:1,minHeight:0,overflow:"hidden"}}><AIPanel/></div></div>}
+            {aiOpen&&<DraggablePanel boundsRef={mapShellRef} initialPosition={{top:12,left:Math.max(10,(mapShellRef.current?.clientWidth||1000)-420)}} zIndex={activeOverlay==="ai"?650:630} width={390} maxWidth="40vw" height="76%" title="AI ANALYSIS PANEL" onClose={()=>setAiOpen(false)}><div onPointerDown={()=>setActiveOverlay("ai")} style={{height:"100%"}}><AIPanel/></div></DraggablePanel>}
 
-            {chatOpen&&<div style={{position:"absolute",top:12,right:58,width:430,maxWidth:"45vw",height:"76%",zIndex:520,background:"rgba(5,8,13,0.96)",border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px",boxShadow:"0 10px 30px rgba(0,0,0,0.45)"}}><ChatRoom compact onClose={()=>setChatOpen(false)}/></div>}
+            {chatOpen&&<DraggablePanel boundsRef={mapShellRef} initialPosition={{top:28,left:Math.max(10,(mapShellRef.current?.clientWidth||1000)-470)}} zIndex={activeOverlay==="chat"?660:640} width={430} maxWidth="45vw" height="76%" title="LIVE CHAT" onClose={()=>setChatOpen(false)}><div onPointerDown={()=>setActiveOverlay("chat")} style={{height:"100%"}}><ChatRoom compact onClose={()=>setChatOpen(false)}/></div></DraggablePanel>}
           </div>
 
           <div style={{flex:1,minHeight:0,overflow:"hidden"}}>
-            <RightPanel/>
+            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange}/>
           </div>
         </main>
       </div>
