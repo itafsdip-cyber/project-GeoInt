@@ -10,6 +10,7 @@ import { loadPersistedState, savePersistedState, loadSavedSessions, saveSessionS
 import { generateIncidentSummary } from "./services/intelligence/incidentSummaryService";
 import { computeTrendAnalytics, TREND_WINDOWS } from "./services/intelligence/trendAnalyticsService";
 import { testLocalLlmConnection } from "./services/intelligence/localLlmService";
+import { initializeGuest, fetchRecentMessages, sendPublicMessage, subscribeToMessageStream } from "./services/chat/publicChatService";
 
 /* ═══════════════════════════════════════════════════════════════════
    GEOINT v10 — pixel-perfect UI match to reference screenshot
@@ -222,20 +223,6 @@ const SEED_CHAT = [
 ];
 
 /* ─── LIVE SIMULATION ENGINE ───────────────────────────────────── */
-const LIVE_CHAT_MSGS = [
-  {user:"GulfAnalyst",  role:"analyst",msg:"Wave 22 just confirmed by UAE MoD. Patriot caught both. The saturation strategy isn't working as well as Iran hoped."},
-  {user:"MaritimeWatch",role:"analyst",msg:"4th tanker now blocked at Hormuz. Lloyd's war risk premium just hit 8% — that's the highest since the Iran-Iraq war in 1984."},
-  {user:"IntelDesk",    role:"analyst",msg:"Oman back-channel is real. I'm seeing 3 independent confirmations. Iran wants a pause, not a surrender. Watch this space."},
-  {user:"DXBResident",  role:"public", msg:"Airport is operating but Emirates just cancelled 6 more routes. Dubai Marina is quiet — half the restaurants closed."},
-  {user:"Observer_IN",  role:"public", msg:"MEA confirmed another 2,000 Indians evacuated today. Total now 9,000. Air India doing incredible work under pressure."},
-  {user:"GulfAnalyst",  role:"analyst",msg:"The Eisenhower repositioning is significant — 60nm from Iranian coast is within F/A-18 strike range without refueling."},
-  {user:"MaritimeWatch",role:"analyst",msg:"Oil futures now +8% after-hours. Brent touching $142. If Hormuz stays blocked another week we're looking at $160+."},
-  {user:"IntelDesk",    role:"analyst",msg:"Hezbollah opening a northern front adds another dimension. IDF now fighting on 3 axes — Gaza, Lebanon, and air defense."},
-  {user:"DXBResident",  role:"public", msg:"Power went out in JLT for 20 minutes earlier. DEWA says it was routine maintenance. Nobody believed them."},
-  {user:"Observer_IN",  role:"public", msg:"My cousin in Abu Dhabi says they can hear the intercept explosions at night. Distant thuds. Sky lights up briefly then silence."},
-  {user:"GulfAnalyst",  role:"analyst",msg:"IRGC strategy is clear now — bleed the Gulf states economically while keeping the US tied down in defensive posture."},
-  {user:"MaritimeWatch",role:"analyst",msg:"UKMTO just issued 3rd warning this hour. Commercial insurers are pulling out. This is becoming uninsurable maritime space."},
-];
 
 const LIVE_TICKER = [
   "Wave 22 launched — UAE Patriot intercepts confirmed — Source: UAE MoD",
@@ -381,9 +368,9 @@ function MapView({selected,setSelected,visibleTrajectories,visibleEvents,timelin
       }
 
       /* map */
-      const map=L.map(mapRef.current,{center:[28,46],zoom:4,zoomControl:false,attributionControl:false});
+      const map=L.map(mapRef.current,{center:[28,46],zoom:4,zoomControl:false,attributionControl:false,worldCopyJump:true,maxBoundsViscosity:0.35,preferCanvas:true,zoomSnap:0.5,zoomDelta:0.5,wheelPxPerZoomLevel:90,inertia:true});
       L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",{maxZoom:12,minZoom:2}).addTo(map);
-      L.control.zoom({position:"bottomright"}).addTo(map);
+      L.control.zoom({position:"topleft"}).addTo(map);
 
       /* country markers */
       const cols={hostile:C.red,threat:C.orange,ally:C.cyan,monitor:C.gold};
@@ -408,9 +395,11 @@ function MapView({selected,setSelected,visibleTrajectories,visibleEvents,timelin
         if(!mapRef.current||!canvas) return;
         canvas.width=mapRef.current.offsetWidth;
         canvas.height=mapRef.current.offsetHeight;
+        map.invalidateSize({ pan:false });
       };
       syncCanvas();
       const ro=new ResizeObserver(syncCanvas); ro.observe(mapRef.current);
+      requestAnimationFrame(()=>map.invalidateSize({ pan:false }));
 
       const toXY=([lat,lng])=>{const pt=map.latLngToContainerPoint(L.latLng(lat,lng));return[pt.x,pt.y];};
 
@@ -483,7 +472,7 @@ function MapView({selected,setSelected,visibleTrajectories,visibleEvents,timelin
     if(!document.getElementById("lf-style")){
       const s=document.createElement("style");s.id="lf-style";
       s.textContent=`
-        .leaflet-control-zoom{border:1px solid #1c2840!important;background:#0d1525!important;border-radius:3px!important;}
+        .leaflet-control-zoom{border:1px solid #1c2840!important;background:#0d1525!important;border-radius:3px!important;margin-top:10px!important;margin-left:10px!important;}
         .leaflet-control-zoom a{background:#0d1525!important;color:#00e5c8!important;border-color:#1c2840!important;font-size:16px!important;line-height:26px!important;width:26px!important;height:26px!important;}
         .leaflet-control-zoom a:hover{background:#1c2840!important;}
         .leaflet-control-attribution{display:none!important;}
@@ -627,7 +616,7 @@ function MapView({selected,setSelected,visibleTrajectories,visibleEvents,timelin
     <div style={{height:"100%",display:"flex",flexDirection:"column",position:"relative"}}>
       {/* The map itself, fills the container */}
       <div style={{flex:1,position:"relative",overflow:"hidden"}}>
-        <div ref={mapRef} style={{width:"100%",height:"100%"}}/>
+        <div ref={mapRef} style={{width:"100%",height:"100%",touchAction:"none"}}/>
         <canvas ref={canvasRef} style={{position:"absolute",top:0,left:0,pointerEvents:"none",zIndex:500}}/>
 
         <div style={{position:"absolute",top:10,left:10,zIndex:600,...panelShell,padding:"8px 10px",minWidth:230}}>
@@ -808,56 +797,66 @@ Always end: RECOMMENDED SOURCES: [2–3 real URLs]`,messages:h})});
 }
 
 /* ─── CHAT ROOM ────────────────────────────────────────────────── */
-const chatAdapter = {
-  subscribeToDemoFeed(onMessage){
-    const usedMsgs=new Set();
-    return setInterval(()=>{
-      const unused=LIVE_CHAT_MSGS.filter((_,i)=>!usedMsgs.has(i));
-      if(unused.length===0){usedMsgs.clear();return;}
-      const idx=LIVE_CHAT_MSGS.indexOf(unused[Math.floor(Math.random()*unused.length)]);
-      usedMsgs.add(idx);
-      const m=LIVE_CHAT_MSGS[idx];
-      onMessage({user:m.user,role:m.role,msg:m.msg,time:nowUTC(),verified:m.role==="analyst"});
-    }, 12000+Math.random()*14000);
-  },
-  async askAssistant(text){
-    const r=await fetch("/api/anthropic",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:250,
-        system:"You are GEOINT-AI in a live public chat room. Iran-US war March 2026. UAE under attack. Hormuz closed. Give sharp factual responses in 2-3 sentences. No censorship. Include source when helpful.",
-        messages:[{role:"user",content:text}]})});
-    const d=await r.json();
-    return d.content?.map(b=>b.text||"").join("")||"";
-  }
-};
-
 function ChatRoom({compact=false, onClose}){
-  const [msgs,setMsgs]=useState(SEED_CHAT);
+  const [msgs,setMsgs]=useState([]);
   const [inp,setInp]=useState("");
-  const [name,setName]=useState("Observer");
+  const [name,setName]=useState("");
   const [aiOn,setAiOn]=useState(false);
   const [aiLoad,setAiLoad]=useState(false);
+  const [chatError,setChatError]=useState("");
   const endRef=useRef(null);
-  const nid=useRef(SEED_CHAT.length+1);
 
-  useEffect(()=>{endRef.current?.scrollIntoView({behavior:"smooth"});},[msgs]);
+  useEffect(()=>{endRef.current?.scrollIntoView({behavior:"smooth"});},[msgs,aiLoad]);
 
   useEffect(()=>{
-    const timer=chatAdapter.subscribeToDemoFeed((m)=>{
-      setMsgs(prev=>[...prev,{id:nid.current++,...m}]);
-    });
-    return()=>clearInterval(timer);
+    let cancelled = false;
+    let unsubscribe = ()=>{};
+
+    const init = async()=>{
+      try{
+        const [guest, history] = await Promise.all([initializeGuest(), fetchRecentMessages()]);
+        if (cancelled) return;
+        setName((prev)=>prev || guest.guestName || "Observer");
+        setMsgs(history.length ? history : SEED_CHAT);
+        unsubscribe = subscribeToMessageStream((message)=>{
+          setMsgs((prev)=>{
+            if (prev.some((item)=>item.id===message.id)) return prev;
+            return [...prev, message];
+          });
+          setChatError("");
+        }, ()=>setChatError("Live stream interrupted. Reconnecting..."));
+      }catch(error){
+        if (cancelled) return;
+        setMsgs(SEED_CHAT);
+        setChatError(`Chat backend unavailable: ${error.message}`);
+      }
+    };
+
+    init();
+    return ()=>{cancelled=true; unsubscribe();};
   },[]);
 
   const send=async()=>{
     if(!inp.trim()) return;
     const q=inp.trim();
-    setMsgs(m=>[...m,{id:nid.current++,user:name||"Guest",role:"public",time:nowUTC(),msg:q,verified:false}]);
     setInp("");
+    setChatError("");
+    try{
+      await sendPublicMessage({ message:q, guestName:name });
+    }catch(error){
+      setChatError(error.message || "Unable to send message.");
+    }
+
     if(aiOn){
       setAiLoad(true);
       try{
-        const t=await chatAdapter.askAssistant(q);
-        if(t) setMsgs(m=>[...m,{id:nid.current++,user:"GEOINT-AI",role:"ai",time:nowUTC(),msg:t,verified:true}]);
+        const r=await fetch("/api/anthropic",{method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:250,
+            system:"You are GEOINT-AI in a live public chat room. Iran-US war March 2026. UAE under attack. Hormuz closed. Give sharp factual responses in 2-3 sentences. No censorship. Include source when helpful.",
+            messages:[{role:"user",content:q}]})});
+        const d=await r.json();
+        const t=d.content?.map(b=>b.text||"").join("")||"";
+        if(t) setMsgs(m=>[...m,{id:`ai-${Date.now()}`,user:"GEOINT-AI",role:"ai",time:nowUTC(),msg:t,verified:true}]);
       }catch{}
       setAiLoad(false);
     }
@@ -879,6 +878,8 @@ function ChatRoom({compact=false, onClose}){
         </div>
       </div>
 
+      {chatError && <div style={{fontSize:8,color:C.orange,border:`1px solid ${C.orange}44`,background:`${C.orange}12`,borderRadius:3,padding:"4px 8px",fontFamily:C.mono}}>{chatError}</div>}
+
       <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:5,minHeight:0,paddingRight:4}}>
         {msgs.map(m=>{const rs=ROLE[m.role]||ROLE.public;return(
           <div key={m.id} style={{background:m.role==="ai"?`${C.green}10`:m.role==="analyst"?`${C.cyan}0f`:"rgba(255,255,255,0.02)",border:`1px solid ${C.border}`,borderLeft:`2px solid ${rs.col}`,borderRadius:3,padding:"7px 10px"}}>
@@ -896,21 +897,13 @@ function ChatRoom({compact=false, onClose}){
       </div>
 
       <div style={{display:"flex",gap:5,flexShrink:0}}>
-        <input value={name} onChange={e=>setName(e.target.value)} placeholder="Username" style={{width:compact?90:110,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,borderRadius:3,padding:"7px 9px",color:C.cyan,fontFamily:C.mono,fontSize:10,outline:"none"}}/>
-        <input value={inp} onChange={e=>setInp(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder="Share intel, ask questions..." style={{flex:1,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,borderRadius:3,padding:"7px 11px",color:C.text,fontFamily:C.mono,fontSize:10.5,outline:"none"}}/>
+        <input value={name} onChange={e=>setName(e.target.value.slice(0, 32))} placeholder="Username" style={{width:compact?110:120,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,borderRadius:3,padding:"7px 8px",color:C.text,fontFamily:C.mono,fontSize:9,outline:"none"}}/>
+        <input value={inp} onChange={e=>setInp(e.target.value.slice(0, 400))} onKeyDown={e=>{if(e.key==="Enter")send();}} placeholder="Share verified update..." style={{flex:1,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,borderRadius:3,padding:"7px 10px",color:C.text,fontFamily:C.mono,fontSize:9.5,outline:"none"}}/>
         <button onClick={send} style={{background:`${C.cyan}15`,border:`1px solid ${C.cyan}44`,color:C.cyan,padding:"7px 12px",borderRadius:3,fontFamily:C.mono,fontSize:9,cursor:"pointer"}}>SEND</button>
       </div>
     </div>
   );
 }
-
-const alertTagStyle = (tag) => {
-  if (tag === ALERT_TYPES.NEW_INCIDENT) return { color: C.cyan, bg: `${C.cyan}16` };
-  if (tag === ALERT_TYPES.MULTI_SOURCE) return { color: C.green, bg: `${C.green}16` };
-  if (tag === ALERT_TYPES.HIGH_SEVERITY) return { color: C.red, bg: `${C.red}16` };
-  if (tag === ALERT_TYPES.WATCHLIST_MATCH) return { color: C.gold, bg: `${C.gold}16` };
-  return { color: C.orange, bg: `${C.orange}16` };
-};
 
 function WatchlistPanel({ watchItems, setWatchItems, timeRange, watchlistSummary }) {
   const [watchType, setWatchType] = useState(WATCH_ITEM_TYPES[0].id);
@@ -1314,7 +1307,7 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
   }, [filteredEvents, watchItems]);
 
   return(
-    <div style={{display:"flex",flexDirection:"column",gap:10,padding:"12px",overflow:"hidden",minHeight:0,background:"linear-gradient(180deg, rgba(4,8,12,0.98), rgba(3,6,10,0.98))"}}>
+    <div style={{display:"flex",flexDirection:"column",gap:10,padding:"12px",overflow:"visible",background:"linear-gradient(180deg, rgba(4,8,12,0.98), rgba(3,6,10,0.98))"}}>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8,alignItems:"stretch"}}>
         {STATS.map((s,i)=>(
           <div key={i} style={{...panelShell,borderTop:`2px solid ${s.c}`,padding:"8px 10px",minHeight:76,display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
@@ -1628,7 +1621,7 @@ function DraggablePanel({children,title,onClose,boundsRef,initialPosition,zIndex
       <span style={{fontSize:9.5,color:C.cyan,letterSpacing:1.8,fontFamily:C.mono,fontWeight:700}}>{title}</span>
       <button onClick={onClose} style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${C.border}`,color:C.textDim,padding:"3px 8px",borderRadius:5,cursor:"pointer",fontFamily:C.mono,fontSize:9}}>CLOSE ✕</button>
     </div>
-    <div style={{flex:1,minHeight:0,overflow:"hidden"}}>{children}</div>
+    <div style={{minHeight:420,overflow:"visible"}}>{children}</div>
   </div>;
 }
 
@@ -1837,7 +1830,7 @@ function GEOINTv10(){
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@700;900&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-        html,body,#root{height:100%;overflow:hidden;background:#020305;}
+        html,body,#root{min-height:100%;background:#020305;overflow-x:hidden;}
         ::-webkit-scrollbar{width:6px;height:6px;}
         ::-webkit-scrollbar-track{background:#020305;}
         ::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#1f2a38,#2d3d52);border-radius:999px;border:1px solid #1b232f;}
@@ -1851,7 +1844,7 @@ function GEOINTv10(){
 
       {searchOpen&&<GlobalSearch onClose={()=>setSearch(false)} feed={filteredFeed} onFocusItem={(item)=>setMapFocusRequest(sanitizeMapFocusRequest({ itemIds: [item.id], selectedId: item.id }))}/>}
 
-      <div style={{height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden",background:themed.bg,fontFamily:C.mono}}>
+      <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",overflow:"visible",background:themed.bg,fontFamily:C.mono}}>
         <header style={{background:"linear-gradient(180deg,#04070b,#04060a)",borderBottom:`1px solid ${C.border}`,height:56,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 18px 0 20px",flexShrink:0,position:"relative",boxShadow:"0 8px 20px rgba(0,0,0,0.28)",gap:12}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             <div style={{fontFamily:C.head,fontSize:20,fontWeight:900,letterSpacing:4.3,color:"#fff",textShadow:"0 0 18px rgba(0,229,200,0.25)"}}>GEO<span style={{color:C.cyan}}>INT</span></div>
@@ -1871,10 +1864,10 @@ function GEOINTv10(){
 
         <Ticker items={tickerItems}/>
 
-        <main style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
-          <div ref={mapShellRef} style={{height:"56%",minHeight:320,borderBottom:`1px solid ${C.border}`,position:"relative",isolation:"isolate"}}>
+        <main style={{display:"flex",flexDirection:"column",overflow:"visible",minHeight:0}}>
+          <div ref={mapShellRef} style={{height:"62vh",minHeight:420,maxHeight:840,borderBottom:`1px solid ${C.border}`,position:"relative",isolation:"isolate",flexShrink:0}}>
             <MapView selected={selected} setSelected={setSelected} visibleTrajectories={filteredFeed.trajectories} visibleEvents={filteredFeed.events} timelineItems={filteredFeed.timeline} mapFocusRequest={mapFocusRequest}/>
-            <div style={{position:"absolute",right:12,bottom:92,zIndex:500,display:"flex",flexDirection:"column",gap:6,padding:6,border:`1px solid ${C.border}`,borderRadius:8,background:"rgba(6,11,18,0.78)",backdropFilter:"blur(3px)"}}>
+            <div style={{position:"absolute",right:14,bottom:18,zIndex:1400,display:"flex",flexDirection:"column",gap:8,padding:8,border:`1px solid ${C.border}`,borderRadius:8,background:"rgba(6,11,18,0.88)",backdropFilter:"blur(3px)"}}>
               <button aria-label="Open AI analysis panel" onClick={()=>{setAiOpen(v=>!v);setActiveOverlay("ai");}} style={floatingBtn} title="AI Analysis"><ControlIcon type="ai"/></button>
               <button aria-label="Open live chat panel" onClick={()=>{setChatOpen(v=>!v);setActiveOverlay("chat");}} style={floatingBtn} title="Live Chat"><ControlIcon type="chat"/></button>
             </div>
@@ -1884,7 +1877,7 @@ function GEOINTv10(){
             {chatOpen&&<DraggablePanel boundsRef={mapShellRef} initialPosition={{top:28,left:Math.max(10,(mapShellRef.current?.clientWidth||1000)-470)}} zIndex={activeOverlay==="chat"?660:640} width={430} maxWidth="45vw" height="76%" title="LIVE CHAT" onClose={()=>setChatOpen(false)}><div onPointerDown={()=>setActiveOverlay("chat")} style={{height:"100%"}}><ChatRoom compact onClose={()=>setChatOpen(false)}/></div></DraggablePanel>}
           </div>
 
-          <div style={{flex:1,minHeight:0,overflow:"hidden"}}>
+          <div style={{minHeight:420,overflow:"visible"}}>
             <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed} watchItems={watchItems} setWatchItems={setWatchItems} heuristicAlerts={heuristicAlerts} heuristicSummary={heuristicSummary} watchlistSummary={watchlistSummary} incidents={incidents} selectedTimezone={timezone} savedSessions={savedSessions} onSaveSession={saveCurrentSession} onLoadSession={loadSession} onDeleteSession={deleteSession} onFocusItem={(item)=>setMapFocusRequest(sanitizeMapFocusRequest({ itemIds: [item.id], selectedId: item.id }))} onFocusIncident={(incident)=>setMapFocusRequest(sanitizeMapFocusRequest({ itemIds: incident.eventIds, selectedId: incident.eventIds?.[0] }))} trendWindowId={trendWindowId} setTrendWindowId={setTrendWindowId} trendAnalytics={trendAnalytics} aiConfig={aiConfig}/>
           </div>
         </main>
