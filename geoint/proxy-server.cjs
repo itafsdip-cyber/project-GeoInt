@@ -30,6 +30,7 @@ const { createConnectorRunner } = require('./api/connectors/connectorRunner.cjs'
 const { fetchAisOverlay } = require('./api/connectors/ais.cjs');
 const { fetchAdsbOverlay } = require('./api/connectors/adsb.cjs');
 const { fetchFirmsOverlay } = require('./api/connectors/firms.cjs');
+const { registerChatRoutes } = require('./api/routes/chat.cjs');
 
 const PORT = Number(process.env.PORT || 3001);
 const API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -56,6 +57,8 @@ function setCors(req, res) {
 
 function makeReqRes(req) {
   return {
+    raw: req,
+    socket: req.socket,
     method: req.method,
     url: req.url,
     headers: req.headers,
@@ -153,6 +156,7 @@ registerIncidentRoutes({ addRoute, storage });
 registerRegionRoutes({ addRoute, storage });
 registerAlertsRoutes({ addRoute, storage });
 registerBriefingAssistantRoutes({ addRoute, storage });
+registerChatRoutes({ addRoute });
 
 const server = http.createServer(async (rawReq, rawRes) => {
   setCors(rawReq, rawRes);
@@ -164,7 +168,7 @@ const server = http.createServer(async (rawReq, rawRes) => {
   try {
     const req = makeReqRes(rawReq);
     req.params = matched.params;
-    await matched.route.handler(req, { json: (payload, status = 200) => json(rawRes, payload, status) });
+    await matched.route.handler(req, { raw: rawRes, json: (payload, status = 200) => json(rawRes, payload, status) });
   } catch (error) {
     json(rawRes, { error: error.message }, 500);
   }

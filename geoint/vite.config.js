@@ -14,6 +14,10 @@ export default defineConfig({
           'anthropic-dangerous-direct-browser-access': 'true',
         },
       },
+      '/chat': {
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true,
+      },
     },
   },
 })
