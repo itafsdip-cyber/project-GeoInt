@@ -17,7 +17,7 @@ function createSqliteStore() {
   const schemaSql = fs.readFileSync(schemaPath, 'utf8');
   const db = new Database(dbPath);
 
-  const requiredTables = ['events', 'incidents', 'entities', 'narratives', 'analyst_notes', 'briefings', 'briefing_sections', 'overlay_tracks', 'ingestion_runs', 'watchlists', 'watchlist_alerts', 'investigations'];
+  const requiredTables = ['events', 'incidents', 'entities', 'narratives', 'analyst_notes', 'briefings', 'briefing_sections', 'overlay_tracks', 'ingestion_runs', 'watchlists', 'watchlist_alerts', 'investigations', 'monitored_regions', 'briefing_assistant_runs', 'export_metadata'];
   const requiredIndexes = ['idx_events_observed_at', 'idx_ingestion_runs_source_id', 'idx_overlay_tracks_type'];
 
   function validateSchema() {
@@ -121,6 +121,22 @@ function createSqliteStore() {
         return db.prepare('DELETE FROM briefings WHERE briefing_id = ?').run(briefingId).changes > 0;
       });
       return tx();
+    },
+
+
+    getMonitoredRegions: () => getSimple('monitored_regions'),
+    saveMonitoredRegions: (regions = []) => upsertSimple('monitored_regions', 'id', 'region_id', regions),
+    getBriefingAssistantRuns: () => getSimple('briefing_assistant_runs').sort((a, b) => Date.parse(b.updatedAt || '') - Date.parse(a.updatedAt || '')),
+    saveBriefingAssistantRun(run) {
+      if (!run?.id) return null;
+      upsertSimple('briefing_assistant_runs', 'id', 'run_id', [{ ...run, updatedAt: run.updatedAt || new Date().toISOString() }]);
+      return run;
+    },
+    getExportMetadata: () => getSimple('export_metadata').sort((a, b) => Date.parse(b.updatedAt || '') - Date.parse(a.updatedAt || '')),
+    saveExportMetadata(meta) {
+      if (!meta?.id) return null;
+      upsertSimple('export_metadata', 'id', 'export_id', [{ ...meta, updatedAt: meta.updatedAt || new Date().toISOString() }]);
+      return meta;
     },
 
     getWatchlists: () => getSimple('watchlists'),

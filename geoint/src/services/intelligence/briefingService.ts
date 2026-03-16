@@ -1,6 +1,6 @@
 import type { BriefingDocument } from '../../types/intelligence';
 
-const SECTION_ORDER = ['Executive Summary', 'Key Judgments', 'Incident Timeline', 'Entity Activity', 'Narrative Assessment', 'Geospatial Overview', 'Confidence and Gaps'];
+const SECTION_ORDER = ['Executive Summary', 'Key Judgments', 'Significant Incidents', 'Region Overview', 'Entity Activity', 'Narrative Environment', 'Watchlist / Alert Highlights', 'Confidence & Gaps'];
 
 export function createBriefing(title = 'GeoInt Briefing'): BriefingDocument {
   const now = new Date().toISOString();

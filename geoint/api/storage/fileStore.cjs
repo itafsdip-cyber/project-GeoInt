@@ -26,6 +26,9 @@ function createInitialStore() {
     watchlists: [],
     watchlist_alerts: [],
     investigations: [],
+    monitored_regions: [],
+    briefing_assistant_runs: [],
+    export_metadata: [],
   };
 }
 
@@ -126,6 +129,22 @@ function createFileStore() {
       current.briefing_sections = current.briefing_sections.filter((section) => section.briefingId !== briefingId);
       writeStore(current);
       return before !== current.briefings.length;
+    },
+
+
+    getMonitoredRegions: () => getCollection('monitored_regions'),
+    saveMonitoredRegions: (regions = []) => saveCollection('monitored_regions', 'id', regions),
+    getBriefingAssistantRuns: () => [...getCollection('briefing_assistant_runs')].sort((a, b) => toMillis(b.updatedAt || b.createdAt) - toMillis(a.updatedAt || a.createdAt)),
+    saveBriefingAssistantRun(run) {
+      if (!run?.id) return null;
+      const [saved] = saveCollection('briefing_assistant_runs', 'id', [{ ...run, updatedAt: run.updatedAt || nowIso() }]).filter((item) => item.id === run.id);
+      return saved;
+    },
+    getExportMetadata: () => [...getCollection('export_metadata')].sort((a, b) => toMillis(b.updatedAt || b.createdAt) - toMillis(a.updatedAt || a.createdAt)),
+    saveExportMetadata(meta) {
+      if (!meta?.id) return null;
+      const [saved] = saveCollection('export_metadata', 'id', [{ ...meta, updatedAt: meta.updatedAt || nowIso() }]).filter((item) => item.id === meta.id);
+      return saved;
     },
 
     getWatchlists: () => getCollection('watchlists'),

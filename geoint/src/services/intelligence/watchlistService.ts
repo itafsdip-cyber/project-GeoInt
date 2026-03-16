@@ -1,10 +1,12 @@
-import type { IntelligenceEvent, NarrativeCluster, OverlayTrack, WatchlistAlert, WatchlistEntry } from '../../types/intelligence';
+import type { Incident, IntelligenceEvent, NarrativeCluster, OverlayTrack, WatchlistAlert, WatchlistEntry } from '../../types/intelligence';
+import { prioritizeAlerts } from './alertScoringService';
 
-export function evaluateWatchlistAlerts({ watchlists, events, narratives, overlays }: {
+export function evaluateWatchlistAlerts({ watchlists, events, narratives, overlays, incidents = [] }: {
   watchlists: WatchlistEntry[];
   events: IntelligenceEvent[];
   narratives: NarrativeCluster[];
   overlays: OverlayTrack[];
+  incidents?: Incident[];
 }): WatchlistAlert[] {
   const alerts: WatchlistAlert[] = [];
   const now = new Date().toISOString();
@@ -29,7 +31,12 @@ export function evaluateWatchlistAlerts({ watchlists, events, narratives, overla
     });
   });
 
-  return alerts.slice(0, 120);
+  return prioritizeAlerts(alerts.slice(0, 120), (alert) => ({
+    incident: incidents.find((incident) => incident.eventIds.includes(alert.matchedObjectId) || incident.incidentId === alert.matchedObjectId),
+    freshnessHours: 6,
+    sourceDiversity: 2,
+    corroboratingSignals: 2,
+  }));
 }
 
 export function createWatchlistEntry(partial: Partial<WatchlistEntry>): WatchlistEntry {

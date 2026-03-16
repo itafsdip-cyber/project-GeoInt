@@ -48,6 +48,12 @@ function registerWatchlistRoutes({ addRoute, storage }) {
       createdAt: body.createdAt || new Date().toISOString(),
       severity: body.severity || 'MEDIUM',
       read: Boolean(body.read),
+      priorityScore: Number(body.priorityScore || 0),
+      scoreBreakdown: body.scoreBreakdown || {},
+      escalationHint: body.escalationHint,
+      relatedRegionIds: Array.isArray(body.relatedRegionIds) ? body.relatedRegionIds : [],
+      relatedIncidentIds: Array.isArray(body.relatedIncidentIds) ? body.relatedIncidentIds : [],
+      caveatText: body.caveatText,
     };
     const saved = [...(storage.getWatchlistAlerts?.() || []), alert];
     storage.saveWatchlistAlerts?.(saved);
