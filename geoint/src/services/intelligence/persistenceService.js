@@ -94,6 +94,19 @@ export const appendHistorySnapshot = ({ events = [], incidents = [] }) => {
   return merged;
 };
 
+export const clearHistoryStore = () => {
+  const state = loadPersistedState() || {};
+  const cleared = sanitizeHistoryStore({ events: [], incidents: [] });
+  savePersistedState({ ...state, historyStore: cleared });
+  return cleared;
+};
+
+export const historyStoreUsage = (historyStore = {}) => ({
+  eventCount: Array.isArray(historyStore.events) ? historyStore.events.length : 0,
+  incidentCount: Array.isArray(historyStore.incidents) ? historyStore.incidents.length : 0,
+  approxBytes: new Blob([JSON.stringify(historyStore || {})]).size,
+});
+
 export const saveSessionSnapshot = ({ name, snapshot }) => {
   const state = loadPersistedState() || {};
   const existing = Array.isArray(state.savedSessions) ? state.savedSessions : [];
