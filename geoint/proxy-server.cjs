@@ -22,6 +22,10 @@ const { registerBriefingsRoutes } = require('./api/routes/briefings.cjs');
 const { registerInvestigationRoutes } = require('./api/routes/investigations.cjs');
 const { registerWatchlistRoutes } = require('./api/routes/watchlists.cjs');
 const { registerSearchRoutes } = require('./api/routes/search.cjs');
+const { registerIncidentRoutes } = require('./api/routes/incidents.cjs');
+const { registerRegionRoutes } = require('./api/routes/regions.cjs');
+const { registerAlertsRoutes } = require('./api/routes/alerts.cjs');
+const { registerBriefingAssistantRoutes } = require('./api/routes/briefing-assistant.cjs');
 const { createConnectorRunner } = require('./api/connectors/connectorRunner.cjs');
 const { fetchAisOverlay } = require('./api/connectors/ais.cjs');
 const { fetchAdsbOverlay } = require('./api/connectors/adsb.cjs');
@@ -145,6 +149,10 @@ registerBriefingsRoutes({ addRoute, storage });
 registerSearchRoutes({ addRoute, storage });
 registerWatchlistRoutes({ addRoute, storage });
 registerInvestigationRoutes({ addRoute, storage });
+registerIncidentRoutes({ addRoute, storage });
+registerRegionRoutes({ addRoute, storage });
+registerAlertsRoutes({ addRoute, storage });
+registerBriefingAssistantRoutes({ addRoute, storage });
 
 const server = http.createServer(async (rawReq, rawRes) => {
   setCors(rawReq, rawRes);

@@ -14,6 +14,20 @@ export type IntelligenceEdgeType =
   | 'SOURCE_REPORTS_ON'
   | 'CONNECTED_TO_VESSEL'
   | 'CONNECTED_TO_AIRCRAFT';
+export type IncidentLifecycleState = 'NEW' | 'ACTIVE' | 'MONITORING' | 'ESCALATED' | 'STABLE' | 'RESOLVED' | 'ARCHIVED';
+export type ConfidenceBand = 'LOW' | 'MEDIUM' | 'HIGH';
+export type RegionGeometryType = 'BBOX' | 'CIRCLE' | 'POLYGON' | 'VIEWPORT';
+
+export interface ConfidenceBreakdown {
+  freshness: number;
+  sourceType: number;
+  corroboration: number;
+  sourceDiversity: number;
+  sourceHealth: number;
+  credibilityBaseline: number;
+  narrativeDispute: number;
+  geolocationPrecision: number;
+}
 
 export interface SourceReference {
   sourceId: string;
@@ -68,8 +82,30 @@ export interface IntelligenceEvent {
 export interface Incident {
   incidentId: string;
   title: string;
+  summary?: string;
+  category?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  firstSeen?: string;
+  lastSeen?: string;
+  lifecycleState?: IncidentLifecycleState;
   eventIds: string[];
+  linkedEventIds?: string[];
+  linkedEntityIds?: string[];
+  linkedNarrativeIds?: string[];
+  linkedOverlayIds?: string[];
+  analystPriority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  escalationReason?: string;
+  regionTags?: string[];
+  sourceCount?: number;
   verificationLevel: VerificationLevel;
+  confidenceScore?: number;
+  confidenceBand?: ConfidenceBand;
+  caveatText?: string;
+  reliabilityBreakdown?: Partial<ConfidenceBreakdown>;
+  gapsNote?: string;
+  fusionRationale?: string[];
+  mergeHistory?: Array<{ mergedIncidentId: string; mergedAt: string; rationale: string }>;
   confidenceNote?: string;
   intelligenceGaps?: string[];
   region?: string;
@@ -225,6 +261,47 @@ export interface WatchlistAlert {
   createdAt: string;
   severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   read: boolean;
+  priorityScore?: number;
+  scoreBreakdown?: Record<string, number>;
+  escalationHint?: string;
+  relatedRegionIds?: string[];
+  relatedIncidentIds?: string[];
+  confidenceScore?: number;
+  confidenceBand?: ConfidenceBand;
+  caveatText?: string;
+  reliabilityBreakdown?: Partial<ConfidenceBreakdown>;
+  gapsNote?: string;
+}
+
+export interface MonitoredRegion {
+  id: string;
+  name: string;
+  geometryType: RegionGeometryType;
+  bbox?: { minLat: number; minLng: number; maxLat: number; maxLng: number };
+  circle?: { center: GeoPoint; radiusKm: number };
+  polygon?: GeoPoint[];
+  viewport?: { center: GeoPoint; zoom: number; bounds?: { north: number; south: number; east: number; west: number } };
+  createdAt: string;
+  updatedAt: string;
+  tags?: string[];
+}
+
+export interface RegionSummary {
+  regionId: string;
+  incidentCount: number;
+  overlayCount: number;
+  narrativeActivityCount: number;
+  watchlistMatches: number;
+  activeAlerts: number;
+  recentSourceDiversity: number;
+  confidenceMix: { low: number; medium: number; high: number };
+  caveatText: string;
+  heuristicSummary: string;
+  lastUpdated: string;
+  confidenceScore?: number;
+  confidenceBand?: ConfidenceBand;
+  reliabilityBreakdown?: Partial<ConfidenceBreakdown>;
+  gapsNote?: string;
 }
 
 export interface InvestigationSession {
@@ -239,6 +316,13 @@ export interface InvestigationSession {
   selectedOverlayIds: string[];
   savedQuery?: string;
   savedFilters?: Record<string, unknown>;
+  mapCenter?: GeoPoint;
+  mapZoom?: number;
+  activeWatchAreaIds?: string[];
+  timelineFilters?: Record<string, unknown>;
+  searchFilters?: Record<string, unknown>;
+  pinnedCorrelationIds?: string[];
+  pinnedAlertIds?: string[];
   linkedNoteIds: string[];
   linkedBriefingIds: string[];
 }

@@ -138,3 +138,24 @@ CREATE TABLE IF NOT EXISTS investigations (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_investigations_updated_at ON investigations(updated_at);
+
+CREATE TABLE IF NOT EXISTS monitored_regions (
+  region_id TEXT PRIMARY KEY,
+  payload TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_monitored_regions_updated_at ON monitored_regions(updated_at);
+
+CREATE TABLE IF NOT EXISTS briefing_assistant_runs (
+  run_id TEXT PRIMARY KEY,
+  payload TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_briefing_assistant_runs_updated_at ON briefing_assistant_runs(updated_at);
+
+CREATE TABLE IF NOT EXISTS export_metadata (
+  export_id TEXT PRIMARY KEY,
+  payload TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_export_metadata_updated_at ON export_metadata(updated_at);

@@ -10,6 +10,8 @@ import type {
   OverlayTrack,
   OverlayTrackType,
   InvestigationSession,
+  MonitoredRegion,
+  RegionSummary,
   WatchlistAlert,
   WatchlistEntry,
 } from '../types/intelligence';
@@ -43,6 +45,8 @@ export interface GeoIntState {
 
   watchlists: WatchlistEntry[];
   watchlistAlerts: WatchlistAlert[];
+  monitoredRegions: MonitoredRegion[];
+  regionSummaries: RegionSummary[];
   investigations: InvestigationSession[];
   selectedInvestigationId?: string;
   searchQuery: string;
@@ -78,6 +82,8 @@ export interface GeoIntStore {
 
     upsertWatchlist: (watchlist: WatchlistEntry) => void;
     setWatchlistAlerts: (alerts: WatchlistAlert[]) => void;
+    upsertMonitoredRegion: (region: MonitoredRegion) => void;
+    setRegionSummaries: (summaries: RegionSummary[]) => void;
     upsertInvestigation: (investigation: InvestigationSession) => void;
     removeInvestigation: (investigationId: string) => void;
     selectInvestigation: (investigationId?: string) => void;
@@ -101,6 +107,8 @@ const initialState: GeoIntState = {
   overlayTracks: [],
   watchlists: [],
   watchlistAlerts: [],
+  monitoredRegions: [],
+  regionSummaries: [],
   investigations: [],
   selectedInvestigationId: undefined,
   searchQuery: '',
@@ -239,6 +247,12 @@ const actions: GeoIntStore['actions'] = {
   },
   setWatchlistAlerts(alerts) {
     setState((state) => ({ ...state, watchlistAlerts: alerts, session: { ...state.session, lastUpdatedAt: now() } }));
+  },
+  upsertMonitoredRegion(region) {
+    setState((state) => ({ ...state, monitoredRegions: [...state.monitoredRegions.filter((item) => item.id !== region.id), region], session: { ...state.session, lastUpdatedAt: now() } }));
+  },
+  setRegionSummaries(summaries) {
+    setState((state) => ({ ...state, regionSummaries: summaries, session: { ...state.session, lastUpdatedAt: now() } }));
   },
   upsertInvestigation(investigation) {
     setState((state) => ({ ...state, investigations: [...state.investigations.filter((item) => item.id !== investigation.id), investigation], session: { ...state.session, lastUpdatedAt: now() } }));
