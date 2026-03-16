@@ -17,7 +17,7 @@ function createSqliteStore() {
   const schemaSql = fs.readFileSync(schemaPath, 'utf8');
   const db = new Database(dbPath);
 
-  const requiredTables = ['events', 'incidents', 'entities', 'narratives', 'analyst_notes', 'briefings', 'briefing_sections', 'overlay_tracks', 'ingestion_runs'];
+  const requiredTables = ['events', 'incidents', 'entities', 'narratives', 'analyst_notes', 'briefings', 'briefing_sections', 'overlay_tracks', 'ingestion_runs', 'watchlists', 'watchlist_alerts', 'investigations'];
   const requiredIndexes = ['idx_events_observed_at', 'idx_ingestion_runs_source_id', 'idx_overlay_tracks_type'];
 
   function validateSchema() {
@@ -122,6 +122,21 @@ function createSqliteStore() {
       });
       return tx();
     },
+
+    getWatchlists: () => getSimple('watchlists'),
+    saveWatchlists: (watchlists = []) => upsertSimple('watchlists', 'id', 'watchlist_id', watchlists),
+    getWatchlistAlerts: () => getSimple('watchlist_alerts').sort((a, b) => Date.parse(b.createdAt || '') - Date.parse(a.createdAt || '')),
+    saveWatchlistAlerts: (alerts = []) => upsertSimple('watchlist_alerts', 'id', 'alert_id', alerts),
+    getInvestigations: () => getSimple('investigations').sort((a, b) => Date.parse(b.updatedAt || '') - Date.parse(a.updatedAt || '')),
+    saveInvestigation(investigation) {
+      if (!investigation?.id) return null;
+      upsertSimple('investigations', 'id', 'investigation_id', [{ ...investigation, updatedAt: investigation.updatedAt || new Date().toISOString() }]);
+      return investigation;
+    },
+    deleteInvestigation(id) {
+      return db.prepare('DELETE FROM investigations WHERE investigation_id = ?').run(id).changes > 0;
+    },
+
     recordIngestionRun(run) {
       const stmt = db.prepare(`INSERT INTO ingestion_runs
       (run_id, source_id, source_type, started_at, finished_at, duration_ms, items_fetched, items_normalized, items_dropped, warnings_count, errors_count, state, warning_messages, error_messages, health_state_after_run)

@@ -56,3 +56,21 @@ export function extractNarratives(events = []) {
 
   return narratives;
 }
+
+export function buildNarrativeClusters(events = []) {
+  return extractNarratives(events).map((item) => ({
+    narrativeId: item.narrativeId,
+    title: item.keywords?.[0] || item.narrativeId,
+    status: item.labels?.includes('disputed') ? 'DISPUTED' : item.labels?.includes('trending') ? 'TRENDING' : 'EMERGING',
+    firstSeen: item.firstSeen,
+    lastSeen: item.lastSeen,
+    sourceCount: item.sourceCount,
+    platformCount: 1,
+    keywords: item.keywords,
+    eventIds: item.eventIds,
+    confidenceWarning: item.labels?.includes('disputed') ? 'Disputed or low-credibility narrative amplification detected.' : undefined,
+    disputedIndicators: item.credibilityIndicators?.disputedSignals ? 1 : 0,
+    amplificationScore: item.credibilityIndicators?.socialAmplificationRatio || 0,
+    caveatNote: 'Repeated claims do not prove truth.',
+  }));
+}

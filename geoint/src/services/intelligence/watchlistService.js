@@ -118,3 +118,41 @@ export const buildWatchlistSummary = ({ events = [], incidents = [], watchItems 
 
   return summary;
 };
+
+export function createWatchlistEntry(partial = {}) {
+  return {
+    id: partial.id || `watch-${Date.now()}`,
+    title: partial.title || 'Untitled watchlist',
+    type: partial.type || 'KEYWORD',
+    criteria: partial.criteria || partial.term || '',
+    createdAt: partial.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    enabled: partial.enabled !== false,
+    severity: partial.severity || 'MEDIUM',
+    analystOwner: partial.analystOwner || 'Analyst',
+    tags: Array.isArray(partial.tags) ? partial.tags : [],
+  };
+}
+
+export function evaluateWatchlistAlerts({ watchlists = [], events = [], narratives = [], overlays = [] }) {
+  const alerts = [];
+  watchlists.filter((watch) => watch.enabled).forEach((watch) => {
+    const needle = String(watch.criteria || '').toLowerCase();
+    events.slice(0, 60).forEach((event) => {
+      if (`${event.title || ''} ${event.summary || ''} ${event.region || ''}`.toLowerCase().includes(needle)) {
+        alerts.push({ id: `alert-${watch.id}-${event.id}`, watchlistId: watch.id, matchedObjectType: 'event', matchedObjectId: event.id, reason: `Event match for ${watch.criteria}`, createdAt: new Date().toISOString(), severity: watch.severity || 'MEDIUM', read: false });
+      }
+    });
+    narratives.forEach((narrative) => {
+      if (`${narrative.title || ''}`.toLowerCase().includes(needle)) {
+        alerts.push({ id: `alert-${watch.id}-${narrative.narrativeId}`, watchlistId: watch.id, matchedObjectType: 'narrative', matchedObjectId: narrative.narrativeId, reason: `Narrative signal for ${watch.criteria}`, createdAt: new Date().toISOString(), severity: watch.severity || 'MEDIUM', read: false });
+      }
+    });
+    overlays.forEach((overlay) => {
+      if (`${overlay.type || ''} ${overlay.label || ''}`.toLowerCase().includes(needle)) {
+        alerts.push({ id: `alert-${watch.id}-${overlay.trackId}`, watchlistId: watch.id, matchedObjectType: 'overlay', matchedObjectId: overlay.trackId, reason: `Overlay match for ${watch.criteria}`, createdAt: new Date().toISOString(), severity: watch.severity || 'MEDIUM', read: false });
+      }
+    });
+  });
+  return alerts;
+}
