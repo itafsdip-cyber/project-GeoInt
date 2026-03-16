@@ -1,211 +1,173 @@
 const http = require('http');
 const https = require('https');
+const { URL } = require('url');
 
-try {
-  require('dotenv').config();
-} catch (error) {
-  if (error && error.code === 'MODULE_NOT_FOUND') {
-    console.warn('⚠️ dotenv is not installed. Run `npm install` to load .env files automatically.');
-  } else {
-    throw error;
-  }
-}
+try { require('dotenv').config(); } catch {}
 
 const { sourceRegistryFromEnv } = require('./api/sourceRegistry.cjs');
+const { createSourceManager } = require('./api/sourceManager.cjs');
 const { fetchGdeltEvents } = require('./api/connectors/gdeltConnector.cjs');
 const { fetchRedditEvents } = require('./api/connectors/redditConnector.cjs');
 const { fetchXEvents } = require('./api/connectors/xConnector.cjs');
 const { fetchRssEvents } = require('./api/connectors/rssConnector.cjs');
+const { fetchAcledEvents } = require('./api/connectors/acledConnector.cjs');
+const persistenceStore = require('./api/persistenceStore.cjs');
+const { buildTrajectories } = require('./api/trajectory.cjs');
+const { createStorage } = require('./api/storage/index.cjs');
+const { registerHistoryRoutes } = require('./api/routes/history.cjs');
+const { registerProviderRoutes } = require('./api/routes/providers.cjs');
+const { registerSourceRoutes } = require('./api/routes/sources.cjs');
+const { registerNotesRoutes } = require('./api/routes/notes.cjs');
+const { registerBriefingsRoutes } = require('./api/routes/briefings.cjs');
+const { registerInvestigationRoutes } = require('./api/routes/investigations.cjs');
+const { registerWatchlistRoutes } = require('./api/routes/watchlists.cjs');
+const { registerSearchRoutes } = require('./api/routes/search.cjs');
+const { registerIncidentRoutes } = require('./api/routes/incidents.cjs');
+const { registerRegionRoutes } = require('./api/routes/regions.cjs');
+const { registerAlertsRoutes } = require('./api/routes/alerts.cjs');
+const { registerBriefingAssistantRoutes } = require('./api/routes/briefing-assistant.cjs');
+const { createConnectorRunner } = require('./api/connectors/connectorRunner.cjs');
+const { fetchAisOverlay } = require('./api/connectors/ais.cjs');
+const { fetchAdsbOverlay } = require('./api/connectors/adsb.cjs');
+const { fetchFirmsOverlay } = require('./api/connectors/firms.cjs');
 
-const PORT = process.env.PORT || 3001;
+const PORT = Number(process.env.PORT || 3001);
 const API_KEY = process.env.ANTHROPIC_API_KEY;
+const allowedOrigins = (process.env.GEOINT_ALLOWED_ORIGINS || '*').split(',').map((value) => value.trim()).filter(Boolean);
 
 const registry = sourceRegistryFromEnv();
-const state = {
-  byProvider: {
-    gdelt: { nextPollAt: 0, events: [], status: null },
-    reddit: { nextPollAt: 0, events: [], status: null },
-    x: { nextPollAt: 0, events: [], status: null },
-    rss: { nextPollAt: 0, events: [], status: null },
-  },
-};
+const sourceManager = createSourceManager(registry);
+const storage = createStorage();
+const connectorRunner = createConnectorRunner({ storage });
+const routes = [];
 
-function setCors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+function addRoute(method, path, handler) {
+  const parts = path.split('/').filter(Boolean);
+  routes.push({ method, path, parts, handler });
+}
+
+function setCors(req, res) {
+  const origin = req.headers.origin;
+  const allowOrigin = allowedOrigins.includes('*') ? '*' : (allowedOrigins.includes(origin) ? origin : allowedOrigins[0] || '*');
+  res.setHeader('Access-Control-Allow-Origin', allowOrigin);
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version');
 }
 
-function dedupeById(events) {
-  const seen = new Set();
-  return events.filter((event) => {
-    if (seen.has(event.id)) return false;
-    seen.add(event.id);
-    return true;
-  });
+function makeReqRes(req) {
+  return {
+    method: req.method,
+    url: req.url,
+    headers: req.headers,
+    params: {},
+    async json() {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      if (!chunks.length) return {};
+      try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return {}; }
+    },
+  };
 }
 
-function toFeed(events, sourceStatuses) {
+function json(res, payload, status = 200) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(payload));
+}
+
+function matchRoute(method, reqUrl) {
+  const pathname = new URL(reqUrl, 'http://localhost').pathname;
+  const reqParts = pathname.split('/').filter(Boolean);
+  for (const route of routes) {
+    if (route.method !== method || route.parts.length !== reqParts.length) continue;
+    const params = {};
+    let matched = true;
+    for (let i = 0; i < route.parts.length; i += 1) {
+      const routePart = route.parts[i];
+      const reqPart = reqParts[i];
+      if (routePart.startsWith(':')) params[routePart.slice(1)] = reqPart;
+      else if (routePart !== reqPart) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) return { route, params };
+  }
+  return null;
+}
+
+async function getNormalizedEventsPayload() {
+  const providers = [
+    ['gdelt', fetchGdeltEvents, registry.gdelt, 'event'],
+    ['rss', fetchRssEvents, registry.rss, 'event'],
+    ['acled', fetchAcledEvents, registry.acled, 'event'],
+    ['reddit', fetchRedditEvents, registry.reddit, 'event'],
+    ['x', fetchXEvents, registry.x, 'event'],
+  ];
+
+  const results = await Promise.all(providers.map(([id, fetcher, config, sourceType]) => connectorRunner.runConnector(id, fetcher, config, sourceType)));
+  const events = results.flatMap((result) => result.events || []);
+  const sourceStatuses = sourceManager.snapshot();
   const ordered = [...events].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-  const alerts = ordered.filter((event) => event.severity === 'high' || event.severity === 'critical').slice(0, 40);
-  const timeline = ordered.slice(0, 120);
-  const sourceCards = Object.values(sourceStatuses).filter(Boolean).map((status) => ({
-    id: `source-${status.provider}`,
-    type: 'source',
-    category: 'source',
-    title: status.provider.toUpperCase(),
-    source: status.provider,
-    timestamp: status.checkedAt,
-    latitude: null,
-    longitude: null,
-    severity: status.state === 'active' ? 'low' : 'medium',
-    verificationStatus: status.state === 'active' ? 'verified' : 'pending',
-    region: 'Global',
-    metadata: {
-      name: status.provider.toUpperCase(),
-      type: 'Provider',
-      bias: 'N/A',
-      credibility: status.state === 'active' ? 80 : 45,
-      health: status.state,
-      reason: status.reason,
-      url: '#',
-    },
-  }));
+  const trajectories = buildTrajectories(ordered).slice(0, 80);
+
+  const overlays = await Promise.all([
+    connectorRunner.runConnector('ais', fetchAisOverlay, { apiKey: process.env.AIS_API_KEY, endpoint: process.env.AIS_ENDPOINT }, 'overlay'),
+    connectorRunner.runConnector('adsb', fetchAdsbOverlay, { apiKey: process.env.ADSB_API_KEY, endpoint: process.env.ADSB_ENDPOINT }, 'overlay'),
+    connectorRunner.runConnector('firms', fetchFirmsOverlay, { apiKey: process.env.FIRMS_API_KEY }, 'overlay'),
+  ]);
+
+  const normalizedOverlays = overlays.flatMap((result) => result.events || []);
+  storage.saveEvents(ordered);
+  storage.saveOverlayTracks(normalizedOverlays);
+  persistenceStore.appendSnapshot({ events: ordered, incidents: [], trajectories });
 
   return {
-    alerts,
     events: ordered,
-    timeline,
-    trajectories: [],
-    sources: sourceCards,
+    timeline: ordered.slice(0, 120),
+    alerts: ordered.filter((event) => ['high', 'critical'].includes(String(event.severity || '').toLowerCase())).slice(0, 40),
     sourceStatuses,
+    overlays: normalizedOverlays,
     generatedAt: new Date().toISOString(),
   };
 }
 
-async function refreshProvider(providerKey, fetcher, config) {
-  const providerState = state.byProvider[providerKey];
-  const now = Date.now();
-  if (providerState.nextPollAt > now && providerState.status) return;
+addRoute('GET', '/events/normalized', async (_req, res) => json(res, await getNormalizedEventsPayload()));
+addRoute('POST', '/v1/messages', async (req, res) => {
+  if (!API_KEY) return json(res, { error: 'ANTHROPIC_API_KEY missing' }, 500);
+  const body = JSON.stringify(await req.json());
+  const options = { hostname: 'api.anthropic.com', port: 443, path: '/v1/messages', method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY, 'anthropic-version': '2023-06-01', 'Content-Length': Buffer.byteLength(body) } };
+  const proxyReq = https.request(options, (proxyRes) => { res.writeHead(proxyRes.statusCode || 500, { 'Content-Type': 'application/json' }); proxyRes.pipe(res); });
+  proxyReq.on('error', (error) => json(res, { error: error.message }, 500));
+  proxyReq.write(body); proxyReq.end();
+});
+
+registerHistoryRoutes({ addRoute, persistenceStore });
+registerProviderRoutes({ addRoute });
+registerSourceRoutes({ addRoute, storage });
+registerNotesRoutes({ addRoute, storage });
+registerBriefingsRoutes({ addRoute, storage });
+registerSearchRoutes({ addRoute, storage });
+registerWatchlistRoutes({ addRoute, storage });
+registerInvestigationRoutes({ addRoute, storage });
+registerIncidentRoutes({ addRoute, storage });
+registerRegionRoutes({ addRoute, storage });
+registerAlertsRoutes({ addRoute, storage });
+registerBriefingAssistantRoutes({ addRoute, storage });
+
+const server = http.createServer(async (rawReq, rawRes) => {
+  setCors(rawReq, rawRes);
+  if (rawReq.method === 'OPTIONS') { rawRes.writeHead(200); rawRes.end(); return; }
+
+  const matched = matchRoute(rawReq.method, rawReq.url);
+  if (!matched) return json(rawRes, { error: 'Not found' }, 404);
 
   try {
-    const result = await fetcher(config);
-    providerState.events = Array.isArray(result.events) ? result.events : [];
-    providerState.status = result.status || {
-      provider: providerKey,
-      state: 'error',
-      reason: 'No status returned',
-      checkedAt: new Date().toISOString(),
-    };
+    const req = makeReqRes(rawReq);
+    req.params = matched.params;
+    await matched.route.handler(req, { json: (payload, status = 200) => json(rawRes, payload, status) });
   } catch (error) {
-    providerState.events = [];
-    providerState.status = {
-      provider: providerKey,
-      state: 'error',
-      reason: 'Connector failed',
-      lastError: error.message,
-      checkedAt: new Date().toISOString(),
-    };
+    json(rawRes, { error: error.message }, 500);
   }
-  providerState.nextPollAt = now + config.refreshMs;
-}
-
-async function getNormalizedEventsPayload() {
-  await Promise.all([
-    refreshProvider('gdelt', fetchGdeltEvents, registry.gdelt),
-    refreshProvider('reddit', fetchRedditEvents, registry.reddit),
-    refreshProvider('x', fetchXEvents, registry.x),
-    refreshProvider('rss', fetchRssEvents, registry.rss),
-  ]);
-
-  const events = dedupeById([
-    ...state.byProvider.gdelt.events,
-    ...state.byProvider.reddit.events,
-    ...state.byProvider.x.events,
-    ...state.byProvider.rss.events,
-  ]);
-
-  const sourceStatuses = {
-    gdelt: state.byProvider.gdelt.status || { provider: 'gdelt', state: 'unavailable', reason: 'No status reported', checkedAt: new Date().toISOString() },
-    reddit: state.byProvider.reddit.status || { provider: 'reddit', state: 'unavailable', reason: 'No status reported', checkedAt: new Date().toISOString() },
-    x: state.byProvider.x.status || { provider: 'x', state: 'unavailable', reason: 'No status reported', checkedAt: new Date().toISOString() },
-    rss: state.byProvider.rss.status || { provider: 'rss', state: 'unavailable', reason: 'No status reported', checkedAt: new Date().toISOString() },
-  };
-
-  return toFeed(events, sourceStatuses);
-}
-
-function proxyAnthropic(req, res, body) {
-  if (!API_KEY) {
-    res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'ANTHROPIC_API_KEY missing' }));
-    return;
-  }
-
-  const options = {
-    hostname: 'api.anthropic.com',
-    port: 443,
-    path: '/v1/messages',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': API_KEY,
-      'anthropic-version': '2023-06-01',
-      'Content-Length': Buffer.byteLength(body),
-    },
-  };
-
-  const proxyReq = https.request(options, (proxyRes) => {
-    res.writeHead(proxyRes.statusCode || 500, {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-    });
-    proxyRes.pipe(res);
-  });
-
-  proxyReq.on('error', (err) => {
-    res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: err.message }));
-  });
-
-  proxyReq.write(body);
-  proxyReq.end();
-}
-
-const server = http.createServer(async (req, res) => {
-  setCors(res);
-
-  if (req.method === 'OPTIONS') {
-    res.writeHead(200);
-    res.end();
-    return;
-  }
-
-  if (req.method === 'GET' && req.url === '/events/normalized') {
-    try {
-      const payload = await getNormalizedEventsPayload();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(payload));
-    } catch (error) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: error.message }));
-    }
-    return;
-  }
-
-  if (req.method === 'POST' && req.url === '/v1/messages') {
-    let body = '';
-    req.on('data', (chunk) => {
-      body += chunk.toString();
-    });
-    req.on('end', () => proxyAnthropic(req, res, body));
-    return;
-  }
-
-  res.writeHead(404, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'Not found' }));
 });
 
-server.listen(PORT, () => {
-  console.log(`✅ GEOINT live proxy running on http://localhost:${PORT}`);
-});
+server.listen(PORT, () => console.log(`✅ GEOINT live proxy running on http://0.0.0.0:${PORT}`));

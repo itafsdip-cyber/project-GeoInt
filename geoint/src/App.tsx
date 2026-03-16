@@ -1888,4 +1888,9 @@ export default function GEOINTv10(){
       </div>
     </>
   );
+  
+import IntelligenceWorkspace from './app/workspace/IntelligenceWorkspace';
+
+export default function App() {
+  return <IntelligenceWorkspace />;
 }

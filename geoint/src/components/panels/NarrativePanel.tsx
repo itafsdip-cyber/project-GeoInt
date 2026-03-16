@@ -1,0 +1,5 @@
+import type { NarrativeCluster } from '../../types/intelligence';
+
+export default function NarrativePanel({ narratives, onPinNarrative }: { narratives: NarrativeCluster[]; onPinNarrative?: (id: string) => void }) {
+  return <section style={{ border: '1px solid #1c2735', padding: 8 }}><div style={{ fontSize: 11, color: '#00e5c8' }}>NARRATIVES</div>{narratives.slice(0, 8).map((narrative) => <div key={narrative.narrativeId} style={{ fontSize: 10, marginTop: 5, borderBottom: '1px dashed #243447', paddingBottom: 4 }}><div>{narrative.title} · {narrative.status} · src {narrative.sourceCount}</div><div style={{ color: '#8da6bd' }}>first {narrative.firstSeen} · last {narrative.lastSeen}</div>{narrative.status === 'DISPUTED' && <span style={{ color: '#ff8f8f' }}>DISPUTED / low credibility propagation surfaced</span>}<div><button onClick={() => onPinNarrative?.(narrative.narrativeId)}>Pin for investigation</button></div></div>)}<div style={{ fontSize: 9, color: '#8fa2b6' }}>Repeated claims can indicate propagation, not proof of truth.</div></section>;
+}
