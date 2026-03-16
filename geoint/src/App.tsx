@@ -6,9 +6,10 @@ import { clusterEventsForZoom, precisionRadiusKm } from "./services/data/mapClus
 import { buildHeuristicAlerts, summarizeHeuristicAlerts, ALERT_TYPES } from "./services/intelligence/alertingService";
 import { WATCH_ITEM_TYPES, createWatchItem, matchEventAgainstWatchlist, buildWatchlistSummary } from "./services/intelligence/watchlistService";
 import { detectIncidents } from "./services/intelligence/incidentDetectionService";
-import { loadPersistedState, savePersistedState, loadSavedSessions, saveSessionSnapshot, deleteSessionSnapshot, appendHistorySnapshot, loadHistoryStore } from "./services/intelligence/persistenceService";
+import { loadPersistedState, savePersistedState, loadSavedSessions, saveSessionSnapshot, deleteSessionSnapshot, appendHistorySnapshot, loadHistoryStore, clearHistoryStore, historyStoreUsage } from "./services/intelligence/persistenceService";
 import { generateIncidentSummary } from "./services/intelligence/incidentSummaryService";
 import { computeTrendAnalytics, TREND_WINDOWS } from "./services/intelligence/trendAnalyticsService";
+import { testLocalLlmConnection } from "./services/intelligence/localLlmService";
 
 /* ═══════════════════════════════════════════════════════════════════
    GEOINT v10 — pixel-perfect UI match to reference screenshot
@@ -43,6 +44,32 @@ const TIME_RANGES = [
   { id: "24h", label: "24H", hours: 24 },
   { id: "7d", label: "7D", hours: 24 * 7 },
 ];
+
+const THEMES = {
+  amoled: { id: "amoled", label: "AMOLED Dark", bg: "#010101", panel: "#07090c", border: "#1a212d", text: "#d6e5f4", textDim: "#60748d", cyan: "#00e5c8" },
+  tactical: { id: "tactical", label: "Tactical Dark", bg: "#020305", panel: "#0a0d12", border: "#1b232f", text: "#d6e5f4", textDim: "#60748d", cyan: "#00e5c8" },
+  dimblue: { id: "dimblue", label: "Dim Blue", bg: "#050912", panel: "#0d1523", border: "#23334a", text: "#d2deed", textDim: "#6d86a6", cyan: "#4bd8ff" },
+  contrast: { id: "contrast", label: "High Contrast", bg: "#000000", panel: "#0b0f14", border: "#3a4c63", text: "#ffffff", textDim: "#b2c4d9", cyan: "#5fffe0" },
+};
+
+const DEFAULT_UI_PREFS = {
+  density: "compact",
+  showUncertaintyRings: true,
+  showClustering: true,
+  refreshIntervalSec: 20,
+  startupTab: "monitor",
+};
+
+const DEFAULT_AI_CONFIG = {
+  summaryMode: "remote",
+  localLlm: {
+    provider: "ollama",
+    baseUrl: "http://127.0.0.1:11434",
+    model: "qwen2.5",
+    timeoutMs: 9000,
+    temperature: 0.2,
+  },
+};
 
 const DEFAULT_WATCH_TERMS = [
   { type: "region", term: "Abu Dhabi" },
@@ -921,14 +948,14 @@ function AlertStrip({ heuristicAlerts, onSelectAlert }) {
   );
 }
 
-function IncidentPanel({ incidents, onFocusIncident }) {
+function IncidentPanel({ incidents, onFocusIncident, aiConfig }) {
   const topIncidents = incidents.slice(0, 6);
   const [summaryById, setSummaryById] = useState({});
   const [loadingId, setLoadingId] = useState(null);
 
   const runSummary = async (incident) => {
     setLoadingId(incident.incidentId);
-    const summary = await generateIncidentSummary(incident);
+    const summary = await generateIncidentSummary(incident, aiConfig);
     setSummaryById((prev) => ({ ...prev, [incident.incidentId]: summary }));
     setLoadingId(null);
   };
@@ -1063,7 +1090,100 @@ function TrendPanel({ trendWindowId, setTrendWindowId, trendAnalytics }) {
   </div>;
 }
 
-function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,setWatchItems,heuristicAlerts,heuristicSummary,watchlistSummary,incidents,onFocusIncident,selectedTimezone,savedSessions,onSaveSession,onLoadSession,onDeleteSession,trendWindowId,setTrendWindowId,trendAnalytics}){
+function SettingsPanel({
+  timezone, setTimezone, themeId, setThemeId, uiPrefs, setUiPrefs,
+  aiConfig, setAiConfig, llmStatus, onTestLlm, onResetSettings,
+  historyUsage, onClearHistory, onExportSessions, onImportSessions,
+}) {
+  const [importError, setImportError] = useState("");
+
+  const updateLocalLlm = (patch) => setAiConfig((prev) => ({ ...prev, localLlm: { ...prev.localLlm, ...patch } }));
+
+  const handleImport = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const raw = await file.text();
+      const parsed = JSON.parse(raw);
+      onImportSessions(parsed);
+      setImportError("");
+    } catch {
+      setImportError("Invalid session JSON.");
+    }
+  };
+
+  return <div style={{position:"absolute",top:62,right:16,zIndex:2200,width:420,maxHeight:"80vh",overflow:"auto",...panelShell,padding:10}}>
+    <div style={{fontSize:9,color:C.cyan,fontFamily:C.mono,letterSpacing:1.2,marginBottom:8}}>SETTINGS</div>
+
+    <div style={{border:`1px solid ${C.border}`,borderRadius:4,padding:8,marginBottom:8,background:C.panel}}>
+      <div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:4}}>TIMEZONE</div>
+      <select value={timezone.id} onChange={(e)=>setTimezone(TIMEZONES.find((tz)=>tz.id===e.target.value) || TIMEZONES[1])} style={{width:"100%",background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,color:C.text,padding:"6px 8px",fontFamily:C.mono,fontSize:9}}>
+        {TIMEZONES.map((tz)=><option key={tz.id} value={tz.id}>{tz.label}</option>)}
+      </select>
+    </div>
+
+    <div style={{border:`1px solid ${C.border}`,borderRadius:4,padding:8,marginBottom:8,background:C.panel}}>
+      <div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:4}}>THEME</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:5}}>
+        {Object.values(THEMES).map((theme)=><button key={theme.id} onClick={()=>setThemeId(theme.id)} style={{background:themeId===theme.id?`${C.cyan}1a`:"rgba(255,255,255,0.03)",border:`1px solid ${themeId===theme.id?C.cyan:C.border}`,color:themeId===theme.id?C.cyan:C.textDim,padding:"5px 6px",fontSize:8,fontFamily:C.mono,cursor:"pointer"}}>{theme.label}</button>)}
+      </div>
+    </div>
+
+    <div style={{border:`1px solid ${C.border}`,borderRadius:4,padding:8,marginBottom:8,background:C.panel,display:"grid",gap:6}}>
+      <div style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>UI PREFERENCES</div>
+      <label style={{fontSize:8,color:C.text,fontFamily:C.mono}}>Density
+        <select value={uiPrefs.density} onChange={(e)=>setUiPrefs((prev)=>({...prev,density:e.target.value}))} style={{marginLeft:8,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,color:C.text,padding:"3px 6px",fontSize:8,fontFamily:C.mono}}><option value="compact">Compact</option><option value="comfortable">Comfortable</option></select>
+      </label>
+      <label style={{fontSize:8,color:C.text,fontFamily:C.mono}}><input type="checkbox" checked={uiPrefs.showUncertaintyRings} onChange={(e)=>setUiPrefs((prev)=>({...prev,showUncertaintyRings:e.target.checked}))}/> Uncertainty rings</label>
+      <label style={{fontSize:8,color:C.text,fontFamily:C.mono}}><input type="checkbox" checked={uiPrefs.showClustering} onChange={(e)=>setUiPrefs((prev)=>({...prev,showClustering:e.target.checked}))}/> Clustering</label>
+      <label style={{fontSize:8,color:C.text,fontFamily:C.mono}}>Refresh interval
+        <input type="number" min={10} max={120} value={uiPrefs.refreshIntervalSec} onChange={(e)=>setUiPrefs((prev)=>({...prev,refreshIntervalSec:Number(e.target.value)||20}))} style={{marginLeft:8,width:64,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,color:C.text,padding:"3px 6px",fontSize:8,fontFamily:C.mono}}/>s
+      </label>
+      <button onClick={onResetSettings} style={{background:"none",border:`1px solid ${C.border}`,color:C.red,padding:"4px 6px",fontSize:8,fontFamily:C.mono}}>RESET SETTINGS</button>
+    </div>
+
+    <div style={{border:`1px solid ${C.border}`,borderRadius:4,padding:8,marginBottom:8,background:C.panel,display:"grid",gap:6}}>
+      <div style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>AI SUMMARY PROVIDER</div>
+      <select value={aiConfig.summaryMode} onChange={(e)=>setAiConfig((prev)=>({...prev,summaryMode:e.target.value}))} style={{background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,color:C.text,padding:"6px 8px",fontFamily:C.mono,fontSize:9}}>
+        <option value="remote">Remote proxy AI</option>
+        <option value="local">Local LLM</option>
+        <option value="heuristic">Heuristic fallback</option>
+      </select>
+      <div style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>LOCAL LLM</div>
+      <select value={aiConfig.localLlm.provider} onChange={(e)=>updateLocalLlm({provider:e.target.value})} style={{background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,color:C.text,padding:"5px 8px",fontFamily:C.mono,fontSize:8}}>
+        <option value="ollama">Ollama</option>
+        <option value="openai-compatible">OpenAI-compatible endpoint</option>
+        <option value="custom">Custom HTTP endpoint</option>
+      </select>
+      <input value={aiConfig.localLlm.baseUrl} onChange={(e)=>updateLocalLlm({baseUrl:e.target.value})} placeholder="Base URL" style={{background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,color:C.text,padding:"5px 8px",fontFamily:C.mono,fontSize:8}}/>
+      <input value={aiConfig.localLlm.model} onChange={(e)=>updateLocalLlm({model:e.target.value})} placeholder="Model name" style={{background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,color:C.text,padding:"5px 8px",fontFamily:C.mono,fontSize:8}}/>
+      <div style={{display:"flex",gap:5}}>
+        <input type="number" value={aiConfig.localLlm.timeoutMs} onChange={(e)=>updateLocalLlm({timeoutMs:Number(e.target.value)||9000})} placeholder="Timeout ms" style={{flex:1,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,color:C.text,padding:"5px 8px",fontFamily:C.mono,fontSize:8}}/>
+        <input type="number" step="0.1" min="0" max="1" value={aiConfig.localLlm.temperature} onChange={(e)=>updateLocalLlm({temperature:Number(e.target.value)})} placeholder="Temp" style={{width:90,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,color:C.text,padding:"5px 8px",fontFamily:C.mono,fontSize:8}}/>
+      </div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+        <button onClick={onTestLlm} style={{background:`${C.cyan}14`,border:`1px solid ${C.cyan}44`,color:C.cyan,padding:"4px 8px",fontSize:8,fontFamily:C.mono}}>TEST CONNECTION</button>
+        <span style={{fontSize:8,color:C.text,fontFamily:C.mono}}>{llmStatus.status || "Not tested"} · {llmStatus.detail || ""}</span>
+      </div>
+      <div style={{border:`1px solid ${C.border}`,borderRadius:3,padding:6,background:"rgba(0,0,0,0.2)",fontSize:7.6,color:C.textDim,lineHeight:1.5,fontFamily:C.mono}}>
+        Local LLM lets incident summaries run on your own endpoint. Ollama quick start: install Ollama, then run <code>ollama pull qwen2.5</code>, <code>ollama run qwen2.5</code>, and keep service at <code>http://127.0.0.1:11434</code>. Other models: <code>llama3</code>, <code>mistral</code>. For OpenAI-compatible servers use base URL like <code>http://127.0.0.1:8000</code> with <code>/v1/chat/completions</code>. Troubleshooting: connection refused = service down/wrong URL, model not found = pull/load model, timeout = increase timeout.
+      </div>
+    </div>
+
+    <div style={{border:`1px solid ${C.border}`,borderRadius:4,padding:8,background:C.panel}}>
+      <div style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>HISTORY & SESSIONS</div>
+      <div style={{fontSize:8,color:C.text,fontFamily:C.mono,margin:"5px 0"}}>History: {historyUsage.eventCount} events · {historyUsage.incidentCount} incidents · ~{Math.round(historyUsage.approxBytes/1024)}KB</div>
+      <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+        <button onClick={onClearHistory} style={{background:"none",border:`1px solid ${C.border}`,color:C.red,padding:"4px 6px",fontSize:8,fontFamily:C.mono}}>CLEAR HISTORY</button>
+        <button onClick={onExportSessions} style={{background:"none",border:`1px solid ${C.border}`,color:C.cyan,padding:"4px 6px",fontSize:8,fontFamily:C.mono}}>EXPORT SESSIONS JSON</button>
+        <label style={{border:`1px solid ${C.border}`,padding:"4px 6px",fontSize:8,color:C.textDim,fontFamily:C.mono,cursor:"pointer"}}>IMPORT<input type="file" accept="application/json" style={{display:"none"}} onChange={handleImport}/></label>
+      </div>
+      {importError && <div style={{fontSize:8,color:C.red,fontFamily:C.mono,marginTop:5}}>{importError}</div>}
+    </div>
+  </div>;
+}
+
+function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,setWatchItems,heuristicAlerts,heuristicSummary,watchlistSummary,incidents,onFocusIncident,selectedTimezone,savedSessions,onSaveSession,onLoadSession,onDeleteSession,trendWindowId,setTrendWindowId,trendAnalytics,aiConfig}){
   const [tab,setTab]=useState("monitor");
   const [sourceFilter,setSourceFilter]=useState("ALL");
   const [evFilter,setEvFilter]=useState("ALL");
@@ -1182,7 +1302,7 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
       </div>
 
       <AlertStrip heuristicAlerts={heuristicAlerts} onSelectAlert={(alert)=>{ if (alert.incidentId) { const incident = incidents.find((entry)=>entry.incidentId===alert.incidentId); if (incident) onFocusIncident(incident); } }}/>
-      <IncidentPanel incidents={incidents} onFocusIncident={onFocusIncident}/>
+      <IncidentPanel incidents={incidents} onFocusIncident={onFocusIncident} aiConfig={aiConfig}/>
 
       <div ref={tabRowRef} style={{display:"flex",border:`1px solid ${C.border}`,borderRadius:8,flexShrink:0,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"thin",padding:"6px",gap:5,WebkitOverflowScrolling:"touch",background:"rgba(10,14,20,0.75)"}}>
         {TABS.map(t=>(
@@ -1441,8 +1561,12 @@ export default function GEOINTv10(){
   const [blink,setBlink]=useState(true);
   const [time,setTime]=useState(new Date());
   const [tickerItems,setTickerItems]=useState([...TICKER_ITEMS]);
-  const [tzOpen,setTzOpen]=useState(false);
   const [timezone,setTimezone]=useState(() => TIMEZONES.find((tz) => tz.id === persistedBootstrap.timezoneId) || TIMEZONES[1]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [themeId, setThemeId] = useState(() => persistedBootstrap.themeId || "tactical");
+  const [uiPrefs, setUiPrefs] = useState(() => ({ ...DEFAULT_UI_PREFS, ...(persistedBootstrap.uiPrefs || {}) }));
+  const [aiConfig, setAiConfig] = useState(() => ({ ...DEFAULT_AI_CONFIG, ...(persistedBootstrap.aiConfig || {}), localLlm: { ...DEFAULT_AI_CONFIG.localLlm, ...(persistedBootstrap.aiConfig?.localLlm || {}) } }));
+  const [llmStatus, setLlmStatus] = useState({ status: "", detail: "" });
   const [aiOpen,setAiOpen]=useState(false);
   const [chatOpen,setChatOpen]=useState(false);
   const [timeRange,setTimeRange]=useState(() => TIME_RANGES.find((range) => range.id === persistedBootstrap.timeRangeId) || TIME_RANGES[3]);
@@ -1453,7 +1577,7 @@ export default function GEOINTv10(){
   const [activeOverlay,setActiveOverlay]=useState("chat");
   const [incidentFocusRequest,setIncidentFocusRequest]=useState(null);
   const mapShellRef=useRef(null);
-  const timezoneWrapRef=useRef(null);
+  const settingsWrapRef=useRef(null);
   const usedTickers=useRef(new Set());
 
   const demoInput = useMemo(() => ({ alerts: ALERTS, events: EVENTS, timeline: TIMELINE, trajectories: TRAJECTORIES, sources: SOURCES }), []);
@@ -1488,8 +1612,11 @@ export default function GEOINTv10(){
       watchItems,
       timeRangeId: timeRange.id,
       timezoneId: timezone.id,
+      themeId,
+      uiPrefs,
+      aiConfig,
       savedSessions,
-      selectedTab: "monitor",
+      selectedTab: uiPrefs.startupTab || "monitor",
       selectedFilters: {},
       trendWindowId,
       mapFocusState: incidentFocusRequest,
@@ -1499,7 +1626,7 @@ export default function GEOINTv10(){
       },
       historyStore,
     });
-  }, [watchItems, timeRange.id, timezone.id, savedSessions, incidentFocusRequest, filteredFeed.events, incidents, trendWindowId, historyStore]);
+  }, [watchItems, timeRange.id, timezone.id, themeId, uiPrefs, aiConfig, savedSessions, incidentFocusRequest, filteredFeed.events, incidents, trendWindowId, historyStore]);
 
   const saveCurrentSession = (name) => {
     const next = saveSessionSnapshot({
@@ -1508,6 +1635,11 @@ export default function GEOINTv10(){
         watchItems,
         timeRangeId: timeRange.id,
         timezoneId: timezone.id,
+        trendWindowId,
+        themeId,
+        aiSummaryMode: aiConfig.summaryMode,
+        localLlm: aiConfig.localLlm,
+        uiPrefs,
       },
     });
     setSavedSessions(next);
@@ -1518,6 +1650,12 @@ export default function GEOINTv10(){
     if (snap.watchItems) setWatchItems(snap.watchItems);
     if (snap.timeRangeId) setTimeRange(TIME_RANGES.find((range) => range.id === snap.timeRangeId) || TIME_RANGES[3]);
     if (snap.timezoneId) setTimezone(TIMEZONES.find((tz) => tz.id === snap.timezoneId) || TIMEZONES[1]);
+    if (snap.trendWindowId) setTrendWindowId(snap.trendWindowId);
+    if (snap.themeId) setThemeId(snap.themeId);
+    if (snap.uiPrefs) setUiPrefs((prev) => ({ ...prev, ...snap.uiPrefs }));
+    if (snap.aiSummaryMode || snap.localLlm) {
+      setAiConfig((prev) => ({ ...prev, summaryMode: snap.aiSummaryMode || prev.summaryMode, localLlm: { ...prev.localLlm, ...(snap.localLlm || {}) } }));
+    }
   };
 
   const deleteSession = (sessionId) => setSavedSessions(deleteSessionSnapshot(sessionId));
@@ -1525,18 +1663,18 @@ export default function GEOINTv10(){
   useEffect(()=>{const t=setInterval(()=>setBlink(b=>!b),900);return()=>clearInterval(t);},[]);
   useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t);},[]);
   useEffect(()=>{
-    const h=e=>{if(e.key==="/"||((e.ctrlKey||e.metaKey)&&e.key==="k")){e.preventDefault();setSearch(true);} if(e.key==="Escape"){setAiOpen(false);setChatOpen(false);setTzOpen(false);}};
+    const h=e=>{if(e.key==="/"||((e.ctrlKey||e.metaKey)&&e.key==="k")){e.preventDefault();setSearch(true);} if(e.key==="Escape"){setAiOpen(false);setChatOpen(false);setSettingsOpen(false);}};
     window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);
   },[]);
 
   useEffect(() => {
-    const closeTimezoneOnOutsideClick = (event) => {
-      if (!tzOpen) return;
-      if (!timezoneWrapRef.current?.contains(event.target)) setTzOpen(false);
+    const closeSettingsOnOutsideClick = (event) => {
+      if (!settingsOpen) return;
+      if (!settingsWrapRef.current?.contains(event.target)) setSettingsOpen(false);
     };
-    window.addEventListener("pointerdown", closeTimezoneOnOutsideClick);
-    return () => window.removeEventListener("pointerdown", closeTimezoneOnOutsideClick);
-  }, [tzOpen]);
+    window.addEventListener("pointerdown", closeSettingsOnOutsideClick);
+    return () => window.removeEventListener("pointerdown", closeSettingsOnOutsideClick);
+  }, [settingsOpen]);
 
   useEffect(()=>{
     const t=setInterval(()=>{
@@ -1553,6 +1691,40 @@ export default function GEOINTv10(){
     const opts={weekday:"short",day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false,timeZone:timezone.zone};
     const tstr=new Intl.DateTimeFormat("en-GB",opts).format(time).replace(',', '');
     return `${tstr.toUpperCase()} ${timezone.id==="utc"?"UTC":timezone.zone?`(${timezone.label})`:"(LOCAL)"}`;
+  };
+
+  const themed = { ...C, ...(THEMES[themeId] || THEMES.tactical) };
+
+  const resetSettings = () => {
+    setThemeId("tactical");
+    setUiPrefs(DEFAULT_UI_PREFS);
+    setTimezone(TIMEZONES[1]);
+    setAiConfig(DEFAULT_AI_CONFIG);
+  };
+
+  const testLlm = async () => {
+    const status = await testLocalLlmConnection(aiConfig.localLlm);
+    setLlmStatus(status);
+  };
+
+  const clearHistory = () => {
+    setHistoryStore(clearHistoryStore());
+  };
+
+  const exportSessions = () => {
+    const payload = JSON.stringify({ savedSessions }, null, 2);
+    const blob = new Blob([payload], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "geoint-sessions.json";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importSessions = (payload) => {
+    if (!Array.isArray(payload?.savedSessions)) return;
+    setSavedSessions(payload.savedSessions.slice(0, 12));
   };
 
   const floatingBtn={
@@ -1580,7 +1752,7 @@ export default function GEOINTv10(){
 
       {searchOpen&&<GlobalSearch onClose={()=>setSearch(false)}/>}
 
-      <div style={{height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden",background:C.bg,fontFamily:C.mono}}>
+      <div style={{height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden",background:themed.bg,fontFamily:C.mono}}>
         <header style={{background:"linear-gradient(180deg,#04070b,#04060a)",borderBottom:`1px solid ${C.border}`,height:56,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 18px 0 20px",flexShrink:0,position:"relative",boxShadow:"0 8px 20px rgba(0,0,0,0.28)",gap:12}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             <div style={{fontFamily:C.head,fontSize:20,fontWeight:900,letterSpacing:4.3,color:"#fff",textShadow:"0 0 18px rgba(0,229,200,0.25)"}}>GEO<span style={{color:C.cyan}}>INT</span></div>
@@ -1590,12 +1762,10 @@ export default function GEOINTv10(){
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <button onClick={()=>setSearch(true)} style={{display:"flex",alignItems:"center",gap:7,background:"rgba(255,255,255,0.03)",border:`1px solid ${C.border}`,color:C.textDim,padding:"6px 13px",borderRadius:5,fontSize:10,cursor:"pointer",fontFamily:C.mono,minWidth:116,justifyContent:"center"}}><span style={{fontSize:14}}>⌕</span>SEARCH<span style={{fontSize:8,opacity:0.45,marginLeft:2}}>⌘K</span></button>
             <div style={{display:"flex",gap:4,alignItems:"center"}}>{[C.green,"#26c970",C.gold,C.orange,C.red].map((c,i)=><div key={i} style={{width:12,height:12,borderRadius:"50%",background:c,opacity:i===4&&!blink?0.35:1,transition:"opacity 0.2s"}}/>)}<span style={{color:C.red,fontSize:10,letterSpacing:2,fontFamily:C.mono,marginLeft:5,fontWeight:"bold"}}>SEVERE</span></div>
-            <div style={{display:"flex",alignItems:"center",gap:8,position:"relative",zIndex:1200}}>
+            <div ref={settingsWrapRef} style={{display:"flex",alignItems:"center",gap:8,position:"relative",zIndex:1200}}>
               <span style={{color:C.textDim,fontSize:10,fontFamily:C.mono,padding:"4px 8px",background:"rgba(255,255,255,0.02)",border:`1px solid ${C.border}`,borderRadius:3,whiteSpace:"nowrap"}}>{fmtTime()}</span>
-              <div ref={timezoneWrapRef} style={{position:"relative"}}>
-                <button onClick={()=>setTzOpen(v=>!v)} style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${C.border}`,color:C.textDim,padding:"5px 9px",borderRadius:3,fontSize:9,fontFamily:C.mono,cursor:"pointer",whiteSpace:"nowrap"}}>TZ: {timezone.label}</button>
-                {tzOpen&&<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",zIndex:1800,background:"rgba(8,12,18,0.98)",border:`1px solid ${C.border}`,borderRadius:4,minWidth:180,overflow:"hidden",boxShadow:"0 14px 24px rgba(0,0,0,0.5)"}}>{TIMEZONES.map(t=><button key={t.id} onClick={()=>{setTimezone(t);setTzOpen(false);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 10px",background:timezone.id===t.id?`${C.cyan}14`:"none",border:"none",borderBottom:`1px solid ${C.border}`,color:timezone.id===t.id?C.cyan:C.textDim,fontSize:9,fontFamily:C.mono,cursor:"pointer"}}>{t.label}</button>)}</div>}
-              </div>
+              <button onClick={()=>setSettingsOpen((v)=>!v)} style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${C.border}`,color:C.textDim,padding:"5px 9px",borderRadius:3,fontSize:11,fontFamily:C.mono,cursor:"pointer"}} title="Settings">⚙</button>
+              {settingsOpen && <SettingsPanel timezone={timezone} setTimezone={setTimezone} themeId={themeId} setThemeId={setThemeId} uiPrefs={uiPrefs} setUiPrefs={setUiPrefs} aiConfig={aiConfig} setAiConfig={setAiConfig} llmStatus={llmStatus} onTestLlm={testLlm} onResetSettings={resetSettings} historyUsage={historyStoreUsage(historyStore)} onClearHistory={clearHistory} onExportSessions={exportSessions} onImportSessions={importSessions} />}
             </div>
           </div>
         </header>
@@ -1616,7 +1786,7 @@ export default function GEOINTv10(){
           </div>
 
           <div style={{flex:1,minHeight:0,overflow:"hidden"}}>
-            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed} watchItems={watchItems} setWatchItems={setWatchItems} heuristicAlerts={heuristicAlerts} heuristicSummary={heuristicSummary} watchlistSummary={watchlistSummary} incidents={incidents} selectedTimezone={timezone} savedSessions={savedSessions} onSaveSession={saveCurrentSession} onLoadSession={loadSession} onDeleteSession={deleteSession} onFocusIncident={(incident)=>setIncidentFocusRequest({ incidentId: incident.incidentId, eventIds: incident.eventIds })} trendWindowId={trendWindowId} setTrendWindowId={setTrendWindowId} trendAnalytics={trendAnalytics}/>
+            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed} watchItems={watchItems} setWatchItems={setWatchItems} heuristicAlerts={heuristicAlerts} heuristicSummary={heuristicSummary} watchlistSummary={watchlistSummary} incidents={incidents} selectedTimezone={timezone} savedSessions={savedSessions} onSaveSession={saveCurrentSession} onLoadSession={loadSession} onDeleteSession={deleteSession} onFocusIncident={(incident)=>setIncidentFocusRequest({ incidentId: incident.incidentId, eventIds: incident.eventIds })} trendWindowId={trendWindowId} setTrendWindowId={setTrendWindowId} trendAnalytics={trendAnalytics} aiConfig={aiConfig}/>
           </div>
         </main>
       </div>
