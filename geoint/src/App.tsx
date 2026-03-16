@@ -6,7 +6,7 @@ import { clusterEventsForZoom, precisionRadiusKm } from "./services/data/mapClus
 import { buildHeuristicAlerts, summarizeHeuristicAlerts, ALERT_TYPES } from "./services/intelligence/alertingService";
 import { WATCH_ITEM_TYPES, createWatchItem, matchEventAgainstWatchlist, buildWatchlistSummary } from "./services/intelligence/watchlistService";
 import { detectIncidents } from "./services/intelligence/incidentDetectionService";
-import { loadPersistedState, savePersistedState, loadSavedSessions, saveSessionSnapshot, deleteSessionSnapshot, appendHistorySnapshot, loadHistoryStore, clearHistoryStore, historyStoreUsage, importSessionSnapshots } from "./services/intelligence/persistenceService";
+import { loadPersistedState, savePersistedState, loadSavedSessions, saveSessionSnapshot, deleteSessionSnapshot, appendHistorySnapshot, loadHistoryStore, clearHistoryStore, historyStoreUsage, importSessionSnapshots, sanitizeWatchItems } from "./services/intelligence/persistenceService";
 import { generateIncidentSummary } from "./services/intelligence/incidentSummaryService";
 import { computeTrendAnalytics, TREND_WINDOWS } from "./services/intelligence/trendAnalyticsService";
 import { testLocalLlmConnection } from "./services/intelligence/localLlmService";
@@ -78,6 +78,21 @@ const DEFAULT_WATCH_TERMS = [
   { type: "keyword", term: "maritime" },
   { type: "source", term: "UAE MoD" },
 ];
+
+const sanitizeMapFocusRequest = (value) => {
+  if (!value || typeof value !== "object") return null;
+  const sourceIds = Array.isArray(value.itemIds) ? value.itemIds : Array.isArray(value.eventIds) ? value.eventIds : [];
+  const itemIds = sourceIds.map((id) => String(id || "").trim()).filter(Boolean).slice(0, 24);
+  if (itemIds.length === 0) return null;
+  const selectedId = value.selectedId != null
+    ? String(value.selectedId)
+    : value.eventId != null
+      ? String(value.eventId)
+      : itemIds[0];
+  return { itemIds, selectedId };
+};
+
+const canFocusMapItem = (item) => item?.latitude != null && item?.longitude != null;
 
 
 /* ─── DATA ─────────────────────────────────────────────────────── */
@@ -339,7 +354,7 @@ function Ticker({items}){
 }
 
 /* ─── MAP VIEW — Leaflet + Canvas trajectory overlay ───────────── */
-function MapView({selected,setSelected,visibleTrajectories,visibleEvents,incidentFocusRequest}){
+function MapView({selected,setSelected,visibleTrajectories,visibleEvents,timelineItems,mapFocusRequest}){
   const trajectoryItems = visibleTrajectories.map((item) => ({
     ...(item.metadata || item),
     osint: item.osint || item.metadata?.osint || null,
@@ -566,9 +581,18 @@ function MapView({selected,setSelected,visibleTrajectories,visibleEvents,inciden
     const layer = incidentLayerRef.current;
     layer.clearLayers();
 
-    if (!incidentFocusRequest?.eventIds?.length) return;
-    const matched = (visibleEvents || []).filter((event) => incidentFocusRequest.eventIds.includes(event.id) && event.latitude != null && event.longitude != null);
+    const requestedIds = mapFocusRequest?.itemIds || [];
+    if (requestedIds.length === 0) return;
+
+    const requestedSet = new Set(requestedIds.map((id) => String(id)));
+    const matched = [...(visibleEvents || []), ...(timelineItems || [])]
+      .filter((event) => requestedSet.has(String(event.id)) && canFocusMapItem(event));
+
     if (matched.length === 0) return;
+
+    if (matched.length === 1) {
+      setSelectedGeoItem({ type: "event", event: matched[0] });
+    }
 
     const bounds = [];
     matched.forEach((event) => {
@@ -582,8 +606,8 @@ function MapView({selected,setSelected,visibleTrajectories,visibleEvents,inciden
       }).addTo(layer);
     });
 
-    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 7 });
-  }, [incidentFocusRequest, visibleEvents]);
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: matched.length === 1 ? 8 : 7 });
+  }, [mapFocusRequest, visibleEvents, timelineItems]);
 
   const legend = [
     ["hostile", C.red, "Hostile actor marker"],
@@ -1194,7 +1218,7 @@ function SettingsPanel({
   </div>;
 }
 
-function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,setWatchItems,heuristicAlerts,heuristicSummary,watchlistSummary,incidents,onFocusIncident,selectedTimezone,savedSessions,onSaveSession,onLoadSession,onDeleteSession,trendWindowId,setTrendWindowId,trendAnalytics,aiConfig}){
+function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,setWatchItems,heuristicAlerts,heuristicSummary,watchlistSummary,incidents,onFocusIncident,onFocusItem,selectedTimezone,savedSessions,onSaveSession,onLoadSession,onDeleteSession,trendWindowId,setTrendWindowId,trendAnalytics,aiConfig}){
   const [tab,setTab]=useState("monitor");
   const [sourceFilter,setSourceFilter]=useState("ALL");
   const [evFilter,setEvFilter]=useState("ALL");
@@ -1312,7 +1336,17 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
         <div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:3,padding:"6px 8px"}}><div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:2}}>SPIKE / HIGH</div><div style={{fontSize:9,color:C.text}}>{heuristicSummary.spikes} spike signals · {heuristicSummary.highSeverity} high-severity · {heuristicSummary.critical} critical</div></div>
       </div>
 
-      <AlertStrip heuristicAlerts={heuristicAlerts} onSelectAlert={(alert)=>{ if (alert.incidentId) { const incident = incidents.find((entry)=>entry.incidentId===alert.incidentId); if (incident) onFocusIncident(incident); } }}/>
+      <AlertStrip heuristicAlerts={heuristicAlerts} onSelectAlert={(alert)=>{
+        if (alert.incidentId) {
+          const incident = incidents.find((entry)=>entry.incidentId===alert.incidentId);
+          if (incident) onFocusIncident(incident);
+          return;
+        }
+        if (alert.eventId) {
+          const event = allEvents.find((entry)=>entry.id===alert.eventId);
+          if (event) onFocusItem?.(event);
+        }
+      }}/>
       <IncidentPanel incidents={incidents} onFocusIncident={onFocusIncident} aiConfig={aiConfig}/>
 
       <div ref={tabRowRef} style={{display:"flex",border:`1px solid ${C.border}`,borderRadius:8,flexShrink:0,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"thin",padding:"6px",gap:5,WebkitOverflowScrolling:"touch",background:"rgba(10,14,20,0.75)"}}>
@@ -1380,7 +1414,7 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
               const providerBadge=providerCategoryStyle(osint.providerCategory);
               const metaBadges=osintMetaBadges(osint);
               const watchMatches = eventWatchMatchById.get(e.id) || [];
-              return(<div key={e.id} onClick={()=>setExpanded(isEx?null:e.id)} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`3px solid ${ec}`,borderRadius:3,padding:"10px 14px",cursor:"pointer"}}>
+              return(<div key={e.id} onClick={()=>{setExpanded(isEx?null:e.id); if (canFocusMapItem(e)) onFocusItem?.(e);}} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`3px solid ${ec}`,borderRadius:3,padding:"10px 14px",cursor:"pointer"}}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{new Date(e.timestamp).toISOString().slice(11,16)} UTC</span><span style={{fontSize:8,color:ec,background:`${ec}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{eventType}</span><span style={{fontSize:7.5,color:labelColor,border:`1px solid ${labelColor}55`,background:`${labelColor}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{label}</span><span style={{fontSize:7.5,color:providerBadge.color,border:`1px solid ${providerBadge.color}55`,background:`${providerBadge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{providerBadge.label}</span>{metaBadges.map((badge)=><span key={`${e.id}-${badge.label}`} style={{fontSize:7,color:badge.color,border:`1px solid ${badge.color}55`,background:`${badge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{badge.label}</span>)}<span style={{fontSize:7,color:C.textDim,border:`1px solid ${C.textDim}55`,background:`${C.textDim}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{osint.credibilityTier || "TIER-?"} · {osint.corroborationLevel || "limited"}</span>{watchMatches.length>0&&<span style={{fontSize:7,color:C.gold,border:`1px solid ${C.gold}55`,background:`${C.gold}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>WATCHLIST MATCH</span>}</div><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.region}</span></div>
                 <div style={{fontSize:11.5,color:C.text,lineHeight:"1.4",marginBottom:isEx?6:0,fontFamily:C.mono}}>{e.title}</div>
                 {isEx&&<><div style={{fontSize:9,color:C.textDim,lineHeight:"1.6",marginBottom:7}}>{e.metadata.detail}</div><div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:7}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>CONF {osint.confidenceScore ?? "--"}%</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>SOURCES {osint.crossSourceCount ?? 1}</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>REL {osint.sourceReliability ?? "--"}%</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>CLUSTER {osint.duplicateClusterId || "N/A"}</span></div>{osint.inferred&&<div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:6}}>Heuristic OSINT signals; verification pending.</div>}<div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:6}}>{(osint.actorTags || []).slice(0,4).map((tag,i)=><span key={`${e.id}-tag-${i}`} style={{fontSize:7.5,color:C.cyan,border:`1px solid ${C.cyan}44`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{tag}</span>)}{(osint.narrativeTags || []).slice(0,3).map((tag,i)=><span key={`${e.id}-narr-${i}`} style={{fontSize:7.5,color:C.purple,border:`1px solid ${C.purple}44`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{tag}</span>)}</div><div style={{display:"flex",flexWrap:"wrap",gap:3}}>{e.metadata.sources?.map((x,i)=><SrcLink key={i} srcKey={x.key} url={x.url} compact/>)}</div></>}
@@ -1389,7 +1423,7 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
           </div>
         )}
 
-        {tab==="timeline"&&(<div style={{position:"relative",paddingLeft:22}}><div style={{position:"absolute",left:9,top:0,bottom:0,width:1,background:`linear-gradient(180deg,transparent,${C.cyan}55,transparent)`}}/>{filteredTimeline.map((entry,i)=>{const t=entry.metadata;const col=typeC[t.type]||C.cyan;const osint=entry.osint||{};const label=osintLabel(osint);const labelColor=osintColor(label);return(<div key={entry.id||i} style={{position:"relative",paddingBottom:16}}><div style={{position:"absolute",left:-15,top:5,width:8,height:8,borderRadius:"50%",background:col,border:`2px solid ${C.bg}`}}/><div style={{fontSize:8,color:C.cyan,fontFamily:C.mono,marginBottom:2}}>{t.date}</div><div style={{fontSize:10.5,color:C.text,lineHeight:"1.5",marginBottom:5}}>{entry.title}</div><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:7,color:col,background:`${col}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{t.type}</span><span style={{fontSize:7,color:labelColor,border:`1px solid ${labelColor}55`,background:`${labelColor}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{label}</span>{(osint.crossSourceCount || 1) > 1 && <span style={{fontSize:7,color:C.cyan,border:`1px solid ${C.cyan}55`,background:`${C.cyan}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>MULTI-SOURCE</span>}<a href={t.srcUrl} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.cyan,textDecoration:"none",fontFamily:C.mono}}>⊕ {entry.source} ↗</a></div></div>);})}</div>)}
+        {tab==="timeline"&&(<div style={{position:"relative",paddingLeft:22}}><div style={{position:"absolute",left:9,top:0,bottom:0,width:1,background:`linear-gradient(180deg,transparent,${C.cyan}55,transparent)`}}/>{filteredTimeline.map((entry,i)=>{const t=entry.metadata;const col=typeC[t.type]||C.cyan;const osint=entry.osint||{};const label=osintLabel(osint);const labelColor=osintColor(label);const focusable=canFocusMapItem(entry);return(<div key={entry.id||i} onClick={()=>focusable&&onFocusItem?.(entry)} style={{position:"relative",paddingBottom:16,cursor:focusable?"pointer":"default"}}><div style={{position:"absolute",left:-15,top:5,width:8,height:8,borderRadius:"50%",background:col,border:`2px solid ${C.bg}`}}/><div style={{fontSize:8,color:C.cyan,fontFamily:C.mono,marginBottom:2}}>{t.date}</div><div style={{fontSize:10.5,color:C.text,lineHeight:"1.5",marginBottom:5}}>{entry.title}</div><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:7,color:col,background:`${col}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{t.type}</span><span style={{fontSize:7,color:labelColor,border:`1px solid ${labelColor}55`,background:`${labelColor}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{label}</span>{(osint.crossSourceCount || 1) > 1 && <span style={{fontSize:7,color:C.cyan,border:`1px solid ${C.cyan}55`,background:`${C.cyan}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>MULTI-SOURCE</span>}{focusable&&<span style={{fontSize:7,color:C.cyan,fontFamily:C.mono}}>MAP</span>}<a href={t.srcUrl} target="_blank" rel="noreferrer" onClick={(event)=>event.stopPropagation()} style={{fontSize:8,color:C.cyan,textDecoration:"none",fontFamily:C.mono}}>⊕ {entry.source} ↗</a></div></div>);})}</div>)}
 
         {tab==="influence"&&(<div style={{display:"flex",flexDirection:"column",gap:5}}>{INFLUENCES.map((inf,i)=>{const col=IC[inf.type]||C.cyan;return(<div key={i} onClick={()=>setInfExp(infExp===i?null:i)} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${col}`,borderRadius:3,padding:"8px 12px",cursor:"pointer"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}><div style={{display:"flex",gap:7,alignItems:"center",minWidth:0}}><span style={{fontSize:10,color:C.text,whiteSpace:"nowrap"}}>{inf.from}</span><span style={{fontSize:10,color:col}}>→</span><span style={{fontSize:10,color:C.text,whiteSpace:"nowrap"}}>{inf.to}</span></div><span style={{fontSize:8,color:col,background:`${col}18`,padding:"2px 7px",borderRadius:2,fontFamily:C.mono}}>{inf.type}</span><span style={{fontSize:9,color:col,fontFamily:C.mono,minWidth:26}}>{inf.str}%</span></div>{infExp===i&&<div style={{marginTop:8}}><div style={{fontSize:9,color:C.textDim,lineHeight:"1.65",marginBottom:6}}>{inf.note}</div><SrcLink srcKey={inf.src} url={inf.srcUrl}/></div>}</div>);})}</div>)}
 
@@ -1412,7 +1446,7 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
 }
 
 /* ─── GLOBAL SEARCH ────────────────────────────────────────────── */
-function GlobalSearch({onClose}){
+function GlobalSearch({onClose, feed, onFocusItem}){
   const [q,setQ]=useState("");
   const [ai,setAi]=useState(false);
   const [res,setRes]=useState("");
@@ -1422,12 +1456,34 @@ function GlobalSearch({onClose}){
 
   const corpus=useMemo(()=>{
     const r=[];
-    EVENTS.forEach(e=>r.push({type:"EVENT",id:e.id,title:e.title,detail:e.detail,src:e.sources[0]?.key,srcUrl:e.sources[0]?.url,evType:e.type,tags:e.tags}));
-    TIMELINE.forEach((t,i)=>r.push({type:"TIMELINE",id:`t${i}`,title:t.event,detail:t.date,src:t.src,srcUrl:t.srcUrl,evType:t.type}));
+    (feed?.events || []).forEach((event)=>r.push({
+      type:"EVENT",
+      id:event.id,
+      title:event.title,
+      detail:event.metadata?.detail || event.region,
+      src:event.source,
+      srcUrl:event.metadata?.sources?.[0]?.url || event.metadata?.sourceUrl,
+      evType:event.metadata?.type || event.type,
+      tags:[...(event.osint?.actorTags || []), ...(event.osint?.narrativeTags || [])],
+      record:event,
+      focusable:canFocusMapItem(event),
+    }));
+    (feed?.timeline || []).forEach((entry,i)=>r.push({
+      type:"TIMELINE",
+      id:entry.id || `timeline-${i}`,
+      title:entry.title,
+      detail:entry.metadata?.detail || entry.metadata?.date || entry.region,
+      src:entry.source,
+      srcUrl:entry.metadata?.srcUrl,
+      evType:entry.metadata?.type || entry.type,
+      tags:[...(entry.osint?.actorTags || []), ...(entry.osint?.narrativeTags || [])],
+      record:entry,
+      focusable:canFocusMapItem(entry),
+    }));
     INFLUENCES.forEach((inf,i)=>r.push({type:"INFLUENCE",id:`inf${i}`,title:`${inf.from} → ${inf.to}`,detail:inf.note,evType:inf.type,src:inf.src,srcUrl:inf.srcUrl}));
     Object.entries(SOURCES).forEach(([k,s])=>r.push({type:"SOURCE",id:k,title:s.name,detail:`${s.type} · ${s.bias} · ${s.credibility}%`,src:k,srcUrl:s.url}));
     return r;
-  },[]);
+  },[feed]);
 
   const results=useMemo(()=>{
     if(!q.trim()) return[];
@@ -1469,14 +1525,23 @@ function GlobalSearch({onClose}){
             </div>
           )}
           {!ai&&results.map(r=>(
-            <div key={r.id} style={{marginBottom:5,background:"rgba(255,255,255,0.02)",border:`1px solid ${C.border}`,borderLeft:`2px solid ${TC[r.type]||C.cyan}`,borderRadius:3,padding:"9px 12px"}}>
+            <div
+              key={r.id}
+              onClick={() => {
+                if (!r.focusable || !r.record) return;
+                onFocusItem?.(r.record);
+                onClose();
+              }}
+              style={{marginBottom:5,background:"rgba(255,255,255,0.02)",border:`1px solid ${C.border}`,borderLeft:`2px solid ${TC[r.type]||C.cyan}`,borderRadius:3,padding:"9px 12px",cursor:r.focusable?"pointer":"default"}}
+            >
               <div style={{display:"flex",gap:5,marginBottom:3}}>
                 <span style={{fontSize:7,color:TC[r.type]||C.cyan,background:`${TC[r.type]||C.cyan}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{r.type}</span>
                 {r.evType&&<span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>{r.evType}</span>}
+                {r.focusable&&<span style={{fontSize:7,color:C.cyan,fontFamily:C.mono,marginLeft:"auto"}}>MAP</span>}
               </div>
               <div style={{fontSize:11,color:C.text,marginBottom:3}}>{r.title}</div>
               <div style={{fontSize:9,color:C.textDim,marginBottom:4}}>{r.detail}</div>
-              {r.src&&<a href={r.srcUrl} target="_blank" rel="noreferrer" style={{fontSize:8,color:C.gold,textDecoration:"none",fontFamily:C.mono}}>⊕ {r.src} ↗</a>}
+              {r.src&&<a href={r.srcUrl} target="_blank" rel="noreferrer" onClick={(event)=>event.stopPropagation()} style={{fontSize:8,color:C.gold,textDecoration:"none",fontFamily:C.mono}}>⊕ {r.src} ↗</a>}
             </div>
           ))}
           {!ai&&q&&results.length===0&&(
@@ -1582,12 +1647,15 @@ export default function GEOINTv10(){
   const [aiOpen,setAiOpen]=useState(false);
   const [chatOpen,setChatOpen]=useState(false);
   const [timeRange,setTimeRange]=useState(() => TIME_RANGES.find((range) => range.id === persistedBootstrap.timeRangeId) || TIME_RANGES[3]);
-  const [watchItems,setWatchItems]=useState(() => persistedBootstrap.watchItems || DEFAULT_WATCH_TERMS.map((item) => createWatchItem(item)).filter(Boolean));
+  const [watchItems,setWatchItems]=useState(() => {
+    const persistedWatchItems = sanitizeWatchItems(persistedBootstrap.watchItems);
+    return persistedWatchItems.length > 0 ? persistedWatchItems : DEFAULT_WATCH_TERMS.map((item) => createWatchItem(item)).filter(Boolean);
+  });
   const [savedSessions, setSavedSessions] = useState(() => loadSavedSessions());
   const [historyStore, setHistoryStore] = useState(() => loadHistoryStore());
   const [trendWindowId, setTrendWindowId] = useState(() => persistedBootstrap.trendWindowId || "24h");
   const [activeOverlay,setActiveOverlay]=useState("chat");
-  const [incidentFocusRequest,setIncidentFocusRequest]=useState(null);
+  const [mapFocusRequest,setMapFocusRequest]=useState(() => sanitizeMapFocusRequest(persistedBootstrap.mapFocusState));
   const mapShellRef=useRef(null);
   const settingsWrapRef=useRef(null);
   const usedTickers=useRef(new Set());
@@ -1631,14 +1699,14 @@ export default function GEOINTv10(){
       selectedTab: uiPrefs.startupTab || "monitor",
       selectedFilters: {},
       trendWindowId,
-      mapFocusState: incidentFocusRequest,
+      mapFocusState: mapFocusRequest,
       history: {
         recentEvents: (filteredFeed.events || []).slice(0, 30),
         recentIncidents: incidents.slice(0, 20),
       },
       historyStore,
     });
-  }, [watchItems, timeRange.id, timezone.id, themeId, uiPrefs, aiConfig, savedSessions, incidentFocusRequest, filteredFeed.events, incidents, trendWindowId, historyStore]);
+  }, [watchItems, timeRange.id, timezone.id, themeId, uiPrefs, aiConfig, savedSessions, mapFocusRequest, filteredFeed.events, incidents, trendWindowId, historyStore]);
 
   const saveCurrentSession = (name) => {
     const next = saveSessionSnapshot({
@@ -1672,6 +1740,7 @@ export default function GEOINTv10(){
         localLlm: { ...prev.localLlm, ...(snap.localLlm || {}) },
       }));
     }
+    setMapFocusRequest(null);
   };
 
   const deleteSession = (sessionId) => setSavedSessions(deleteSessionSnapshot(sessionId));
@@ -1777,7 +1846,7 @@ export default function GEOINTv10(){
         a:hover{opacity:0.85;}
       `}</style>
 
-      {searchOpen&&<GlobalSearch onClose={()=>setSearch(false)}/>}
+      {searchOpen&&<GlobalSearch onClose={()=>setSearch(false)} feed={filteredFeed} onFocusItem={(item)=>setMapFocusRequest(sanitizeMapFocusRequest({ itemIds: [item.id], selectedId: item.id }))}/>}
 
       <div style={{height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden",background:themed.bg,fontFamily:C.mono}}>
         <header style={{background:"linear-gradient(180deg,#04070b,#04060a)",borderBottom:`1px solid ${C.border}`,height:56,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 18px 0 20px",flexShrink:0,position:"relative",boxShadow:"0 8px 20px rgba(0,0,0,0.28)",gap:12}}>
@@ -1801,7 +1870,7 @@ export default function GEOINTv10(){
 
         <main style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
           <div ref={mapShellRef} style={{height:"56%",minHeight:320,borderBottom:`1px solid ${C.border}`,position:"relative",isolation:"isolate"}}>
-            <MapView selected={selected} setSelected={setSelected} visibleTrajectories={filteredFeed.trajectories} visibleEvents={filteredFeed.events} incidentFocusRequest={incidentFocusRequest}/>
+            <MapView selected={selected} setSelected={setSelected} visibleTrajectories={filteredFeed.trajectories} visibleEvents={filteredFeed.events} timelineItems={filteredFeed.timeline} mapFocusRequest={mapFocusRequest}/>
             <div style={{position:"absolute",right:12,bottom:92,zIndex:500,display:"flex",flexDirection:"column",gap:6,padding:6,border:`1px solid ${C.border}`,borderRadius:8,background:"rgba(6,11,18,0.78)",backdropFilter:"blur(3px)"}}>
               <button aria-label="Open AI analysis panel" onClick={()=>{setAiOpen(v=>!v);setActiveOverlay("ai");}} style={floatingBtn} title="AI Analysis"><ControlIcon type="ai"/></button>
               <button aria-label="Open live chat panel" onClick={()=>{setChatOpen(v=>!v);setActiveOverlay("chat");}} style={floatingBtn} title="Live Chat"><ControlIcon type="chat"/></button>
@@ -1813,7 +1882,7 @@ export default function GEOINTv10(){
           </div>
 
           <div style={{flex:1,minHeight:0,overflow:"hidden"}}>
-            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed} watchItems={watchItems} setWatchItems={setWatchItems} heuristicAlerts={heuristicAlerts} heuristicSummary={heuristicSummary} watchlistSummary={watchlistSummary} incidents={incidents} selectedTimezone={timezone} savedSessions={savedSessions} onSaveSession={saveCurrentSession} onLoadSession={loadSession} onDeleteSession={deleteSession} onFocusIncident={(incident)=>setIncidentFocusRequest({ incidentId: incident.incidentId, eventIds: incident.eventIds })} trendWindowId={trendWindowId} setTrendWindowId={setTrendWindowId} trendAnalytics={trendAnalytics} aiConfig={aiConfig}/>
+            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed} watchItems={watchItems} setWatchItems={setWatchItems} heuristicAlerts={heuristicAlerts} heuristicSummary={heuristicSummary} watchlistSummary={watchlistSummary} incidents={incidents} selectedTimezone={timezone} savedSessions={savedSessions} onSaveSession={saveCurrentSession} onLoadSession={loadSession} onDeleteSession={deleteSession} onFocusItem={(item)=>setMapFocusRequest(sanitizeMapFocusRequest({ itemIds: [item.id], selectedId: item.id }))} onFocusIncident={(incident)=>setMapFocusRequest(sanitizeMapFocusRequest({ itemIds: incident.eventIds, selectedId: incident.eventIds?.[0] }))} trendWindowId={trendWindowId} setTrendWindowId={setTrendWindowId} trendAnalytics={trendAnalytics} aiConfig={aiConfig}/>
           </div>
         </main>
       </div>
