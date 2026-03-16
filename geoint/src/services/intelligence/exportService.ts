@@ -24,7 +24,11 @@ export function exportPayload(input: {
   if (input.format === 'html') return `<html><body><pre>${JSON.stringify(payload, null, 2)}</pre></body></html>`;
   if (input.format === 'csv') {
     const alerts = input.alerts || [];
-    return ['id,severity,priorityScore,reason,matchedObjectType,matchedObjectId', ...alerts.map((alert) => `${alert.id},${alert.severity},${alert.priorityScore || ''},"${alert.reason.replaceAll('"', '""')}",${alert.matchedObjectType},${alert.matchedObjectId}`)].join('\n');
+    const searchResults = input.searchResults || [];
+    if (alerts.length) {
+      return ['id,severity,priorityScore,reason,matchedObjectType,matchedObjectId,caveat', ...alerts.map((alert) => `${alert.id},${alert.severity},${alert.priorityScore || ''},"${alert.reason.replaceAll('"', '""')}",${alert.matchedObjectType},${alert.matchedObjectId},"${(alert.caveatText || '').replaceAll('"', '""')}"`)].join('\n');
+    }
+    return ['id,type,title,timestamp,score,confidence,caveat', ...searchResults.map((result) => `${result.id},${result.type},"${result.title.replaceAll('"', '""')}",${result.timestamp},${result.score || ''},"${result.confidenceHint.replaceAll('"', '""')}","${(result.caveatHint || '').replaceAll('"', '""')}"`)].join('\n');
   }
   if (input.format === 'text') return `${payload.caveat}\n\n${JSON.stringify(payload, null, 2)}`;
 
