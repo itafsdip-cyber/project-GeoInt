@@ -6,8 +6,9 @@ import { clusterEventsForZoom, precisionRadiusKm } from "./services/data/mapClus
 import { buildHeuristicAlerts, summarizeHeuristicAlerts, ALERT_TYPES } from "./services/intelligence/alertingService";
 import { WATCH_ITEM_TYPES, createWatchItem, matchEventAgainstWatchlist, buildWatchlistSummary } from "./services/intelligence/watchlistService";
 import { detectIncidents } from "./services/intelligence/incidentDetectionService";
-import { loadPersistedState, savePersistedState, loadSavedSessions, saveSessionSnapshot, deleteSessionSnapshot } from "./services/intelligence/persistenceService";
+import { loadPersistedState, savePersistedState, loadSavedSessions, saveSessionSnapshot, deleteSessionSnapshot, appendHistorySnapshot, loadHistoryStore } from "./services/intelligence/persistenceService";
 import { generateIncidentSummary } from "./services/intelligence/incidentSummaryService";
+import { computeTrendAnalytics, TREND_WINDOWS } from "./services/intelligence/trendAnalyticsService";
 
 /* ═══════════════════════════════════════════════════════════════════
    GEOINT v10 — pixel-perfect UI match to reference screenshot
@@ -995,7 +996,74 @@ function SavedSessionsPanel({ onSave, onLoad, sessions, onDelete }) {
 }
 
 /* ─── RIGHT PANEL ──────────────────────────────────────────────── */
-function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,setWatchItems,heuristicAlerts,heuristicSummary,watchlistSummary,incidents,onFocusIncident,selectedTimezone,savedSessions,onSaveSession,onLoadSession,onDeleteSession}){
+
+
+const trendBadgeStyle = (trend) => {
+  if (trend === "SPIKE") return { color: C.red, bg: `${C.red}1a` };
+  if (trend === "NEW") return { color: C.cyan, bg: `${C.cyan}1a` };
+  if (trend === "UP") return { color: C.orange, bg: `${C.orange}1a` };
+  if (trend === "DOWN") return { color: C.textDim, bg: `${C.textDim}1a` };
+  return { color: C.gold, bg: `${C.gold}1a` };
+};
+
+function TrendRow({ label, item }) {
+  const style = trendBadgeStyle(item.trend);
+  return <div style={{display:"grid",gridTemplateColumns:"1fr auto auto",alignItems:"center",gap:7,fontFamily:C.mono}}>
+    <span style={{fontSize:8.2,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{label}</span>
+    <span style={{fontSize:7.2,color:C.textDim}}>{item.currentCount}/{item.previousCount}</span>
+    <span style={{fontSize:7.2,color:style.color,border:`1px solid ${style.color}55`,background:style.bg,padding:"1px 5px",borderRadius:2,minWidth:40,textAlign:"center"}}>{item.trend}</span>
+  </div>;
+}
+
+function TrendPanel({ trendWindowId, setTrendWindowId, trendAnalytics }) {
+  return <div style={{...panelShell,padding:"8px 9px",display:"flex",flexDirection:"column",gap:7}}>
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,flexWrap:"wrap"}}>
+      <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono,letterSpacing:1}}>TREND ANALYTICS</span>
+      <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+        {TREND_WINDOWS.map((window)=> <button key={window.id} onClick={()=>setTrendWindowId(window.id)} style={{background:trendWindowId===window.id?`${C.cyan}1f`:"rgba(255,255,255,0.03)",border:`1px solid ${trendWindowId===window.id?C.cyan:C.border}`,color:trendWindowId===window.id?C.cyan:C.textDim,padding:"2px 6px",fontSize:7.2,borderRadius:2,fontFamily:C.mono,cursor:"pointer"}}>{window.label}</button>)}
+      </div>
+    </div>
+
+    <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:6}}>
+      <div style={{border:`1px solid ${C.border}`,borderRadius:3,padding:"5px 6px",background:C.panel}}>
+        <div style={{fontSize:7,color:C.textDim,fontFamily:C.mono,marginBottom:2}}>EVENT DELTA</div>
+        <div style={{fontSize:10,color:C.text,fontFamily:C.mono}}>{trendAnalytics.eventDelta.delta>=0?'+':''}{trendAnalytics.eventDelta.delta} ({trendAnalytics.eventDelta.trend})</div>
+      </div>
+      <div style={{border:`1px solid ${C.border}`,borderRadius:3,padding:"5px 6px",background:C.panel}}>
+        <div style={{fontSize:7,color:C.textDim,fontFamily:C.mono,marginBottom:2}}>INCIDENT DELTA</div>
+        <div style={{fontSize:10,color:C.text,fontFamily:C.mono}}>{trendAnalytics.incidentDelta.delta>=0?'+':''}{trendAnalytics.incidentDelta.delta} ({trendAnalytics.incidentDelta.trend})</div>
+      </div>
+    </div>
+
+    <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:7}}>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        <div style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>RISING REGIONS</div>
+        {(trendAnalytics.regionTrend || []).slice(0,3).map((item)=><TrendRow key={`region-${item.key}`} label={item.key} item={item} />)}
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        <div style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>RISING CATEGORIES</div>
+        {(trendAnalytics.categoryTrend || []).slice(0,3).map((item)=><TrendRow key={`category-${item.key}`} label={item.key} item={item} />)}
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        <div style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>RISING ACTORS</div>
+        {(trendAnalytics.actorTrend || []).slice(0,3).map((item)=><TrendRow key={`actor-${item.key}`} label={item.key} item={item} />)}
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        <div style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>TOP ACTIVE SOURCES</div>
+        {(trendAnalytics.sourceTrend || []).slice(0,3).map((item)=><TrendRow key={`source-${item.key}`} label={item.key} item={item} />)}
+      </div>
+    </div>
+
+    {trendAnalytics.watchSpikeMatches?.length > 0 && <div style={{border:`1px solid ${C.orange}55`,borderRadius:3,padding:"5px 6px",background:`${C.orange}12`}}>
+      <div style={{fontSize:7,color:C.orange,fontFamily:C.mono,marginBottom:3}}>WATCHLIST TREND FLAGS</div>
+      <div style={{display:"flex",flexDirection:"column",gap:2}}>
+        {trendAnalytics.watchSpikeMatches.slice(0,4).map((item)=> <div key={`watch-${item.dimension}-${item.key}`} style={{fontSize:7.6,color:C.text,fontFamily:C.mono}}>{item.dimension.toUpperCase()} · {item.key} · {item.trend}</div>)}
+      </div>
+    </div>}
+  </div>;
+}
+
+function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,setWatchItems,heuristicAlerts,heuristicSummary,watchlistSummary,incidents,onFocusIncident,selectedTimezone,savedSessions,onSaveSession,onLoadSession,onDeleteSession,trendWindowId,setTrendWindowId,trendAnalytics}){
   const [tab,setTab]=useState("monitor");
   const [sourceFilter,setSourceFilter]=useState("ALL");
   const [evFilter,setEvFilter]=useState("ALL");
@@ -1105,6 +1173,7 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
 
       <WatchlistPanel watchItems={watchItems} setWatchItems={setWatchItems} timeRange={timeRange} watchlistSummary={watchlistSummary}/>
       <SavedSessionsPanel onSave={onSaveSession} onLoad={onLoadSession} sessions={savedSessions} onDelete={onDeleteSession} />
+      <TrendPanel trendWindowId={trendWindowId} setTrendWindowId={setTrendWindowId} trendAnalytics={trendAnalytics} />
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:6}}>
         <div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:3,padding:"6px 8px"}}><div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:2}}>WATCHLIST</div><div style={{fontSize:9,color:C.text}}>{heuristicSummary.watchMatches} watchlist matches in last {timeRange.label}</div></div>
@@ -1379,6 +1448,8 @@ export default function GEOINTv10(){
   const [timeRange,setTimeRange]=useState(() => TIME_RANGES.find((range) => range.id === persistedBootstrap.timeRangeId) || TIME_RANGES[3]);
   const [watchItems,setWatchItems]=useState(() => persistedBootstrap.watchItems || DEFAULT_WATCH_TERMS.map((item) => createWatchItem(item)).filter(Boolean));
   const [savedSessions, setSavedSessions] = useState(() => loadSavedSessions());
+  const [historyStore, setHistoryStore] = useState(() => loadHistoryStore());
+  const [trendWindowId, setTrendWindowId] = useState(() => persistedBootstrap.trendWindowId || "24h");
   const [activeOverlay,setActiveOverlay]=useState("chat");
   const [incidentFocusRequest,setIncidentFocusRequest]=useState(null);
   const mapShellRef=useRef(null);
@@ -1398,6 +1469,19 @@ export default function GEOINTv10(){
   }), [filteredFeed.events, filteredFeed.alerts, incidents, watchItems, timeRange.hours]);
   const heuristicSummary = useMemo(() => summarizeHeuristicAlerts({ heuristicAlerts, watchItems }), [heuristicAlerts, watchItems]);
   const watchlistSummary = useMemo(() => buildWatchlistSummary({ events: filteredFeed.events, incidents, watchItems }), [filteredFeed.events, incidents, watchItems]);
+  const trendAnalytics = useMemo(() => computeTrendAnalytics({
+    historyStore,
+    windowId: trendWindowId,
+    watchItems,
+  }), [historyStore, trendWindowId, watchItems]);
+
+  useEffect(() => {
+    const merged = appendHistorySnapshot({
+      events: filteredFeed.events || [],
+      incidents,
+    });
+    setHistoryStore(merged);
+  }, [filteredFeed.events, incidents]);
 
   useEffect(() => {
     savePersistedState({
@@ -1407,13 +1491,15 @@ export default function GEOINTv10(){
       savedSessions,
       selectedTab: "monitor",
       selectedFilters: {},
+      trendWindowId,
       mapFocusState: incidentFocusRequest,
       history: {
         recentEvents: (filteredFeed.events || []).slice(0, 30),
         recentIncidents: incidents.slice(0, 20),
       },
+      historyStore,
     });
-  }, [watchItems, timeRange.id, timezone.id, savedSessions, incidentFocusRequest, filteredFeed.events, incidents]);
+  }, [watchItems, timeRange.id, timezone.id, savedSessions, incidentFocusRequest, filteredFeed.events, incidents, trendWindowId, historyStore]);
 
   const saveCurrentSession = (name) => {
     const next = saveSessionSnapshot({
@@ -1530,7 +1616,7 @@ export default function GEOINTv10(){
           </div>
 
           <div style={{flex:1,minHeight:0,overflow:"hidden"}}>
-            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed} watchItems={watchItems} setWatchItems={setWatchItems} heuristicAlerts={heuristicAlerts} heuristicSummary={heuristicSummary} watchlistSummary={watchlistSummary} incidents={incidents} selectedTimezone={timezone} savedSessions={savedSessions} onSaveSession={saveCurrentSession} onLoadSession={loadSession} onDeleteSession={deleteSession} onFocusIncident={(incident)=>setIncidentFocusRequest({ incidentId: incident.incidentId, eventIds: incident.eventIds })}/>
+            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed} watchItems={watchItems} setWatchItems={setWatchItems} heuristicAlerts={heuristicAlerts} heuristicSummary={heuristicSummary} watchlistSummary={watchlistSummary} incidents={incidents} selectedTimezone={timezone} savedSessions={savedSessions} onSaveSession={saveCurrentSession} onLoadSession={loadSession} onDeleteSession={deleteSession} onFocusIncident={(incident)=>setIncidentFocusRequest({ incidentId: incident.incidentId, eventIds: incident.eventIds })} trendWindowId={trendWindowId} setTrendWindowId={setTrendWindowId} trendAnalytics={trendAnalytics}/>
           </div>
         </main>
       </div>
