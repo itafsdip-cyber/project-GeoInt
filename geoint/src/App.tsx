@@ -5,6 +5,7 @@ import { orderedProviderStatus } from "./services/data/connectors/sourceRegistry
 import { clusterEventsForZoom, precisionRadiusKm } from "./services/data/mapClustering";
 import { buildHeuristicAlerts, summarizeHeuristicAlerts, ALERT_TYPES } from "./services/intelligence/alertingService";
 import { WATCH_ITEM_TYPES, createWatchItem, matchEventAgainstWatchlist, buildWatchlistSummary } from "./services/intelligence/watchlistService";
+import { detectIncidents } from "./services/intelligence/incidentDetectionService";
 
 /* ═══════════════════════════════════════════════════════════════════
    GEOINT v10 — pixel-perfect UI match to reference screenshot
@@ -308,7 +309,7 @@ function Ticker({items}){
 }
 
 /* ─── MAP VIEW — Leaflet + Canvas trajectory overlay ───────────── */
-function MapView({selected,setSelected,visibleTrajectories,visibleEvents}){
+function MapView({selected,setSelected,visibleTrajectories,visibleEvents,incidentFocusRequest}){
   const trajectoryItems = visibleTrajectories.map((item) => ({
     ...(item.metadata || item),
     osint: item.osint || item.metadata?.osint || null,
@@ -322,6 +323,7 @@ function MapView({selected,setSelected,visibleTrajectories,visibleEvents}){
   const showRef   = useRef(true);
   const filterRef = useRef("ALL");
   const eventLayerRef = useRef(null);
+  const incidentLayerRef = useRef(null);
   const [selectedGeoItem, setSelectedGeoItem] = useState(null);
   const [legendOpen, setLegendOpen] = useState(true);
 
@@ -521,6 +523,37 @@ function MapView({selected,setSelected,visibleTrajectories,visibleEvents}){
     map.on("zoomend", renderClusters);
     return () => map.off("zoomend", renderClusters);
   }, [visibleEvents]);
+
+  useEffect(() => {
+    const map = leafRef.current;
+    const L = window.L;
+    if (!map || !L) return;
+
+    if (!incidentLayerRef.current) {
+      incidentLayerRef.current = L.layerGroup().addTo(map);
+    }
+
+    const layer = incidentLayerRef.current;
+    layer.clearLayers();
+
+    if (!incidentFocusRequest?.eventIds?.length) return;
+    const matched = (visibleEvents || []).filter((event) => incidentFocusRequest.eventIds.includes(event.id) && event.latitude != null && event.longitude != null);
+    if (matched.length === 0) return;
+
+    const bounds = [];
+    matched.forEach((event) => {
+      bounds.push([event.latitude, event.longitude]);
+      L.circleMarker([event.latitude, event.longitude], {
+        radius: 9,
+        color: C.red,
+        weight: 1.5,
+        fillColor: C.red,
+        fillOpacity: 0.2,
+      }).addTo(layer);
+    });
+
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 7 });
+  }, [incidentFocusRequest, visibleEvents]);
 
   const legend = [
     ["hostile", C.red, "Hostile actor marker"],
@@ -885,8 +918,45 @@ function AlertStrip({ heuristicAlerts }) {
   );
 }
 
+function IncidentPanel({ incidents, onFocusIncident }) {
+  const topIncidents = incidents.slice(0, 6);
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono,letterSpacing:1.1}}>INCIDENT DETECTION</span>
+        <span style={{fontSize:8,color:C.cyan,fontFamily:C.mono}}>{topIncidents.length} ACTIVE</span>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:6}}>
+        {topIncidents.map((incident) => {
+          const sev = incident.severity || "LOW";
+          const col = sevColor(sev);
+          return (
+            <button key={incident.incidentId} onClick={() => onFocusIncident(incident)} style={{textAlign:"left",background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${col}`,borderRadius:4,padding:"7px 8px",cursor:"pointer"}}>
+              <div style={{display:"flex",justifyContent:"space-between",gap:6,marginBottom:4}}>
+                <span style={{fontSize:7.5,color:C.textDim,fontFamily:C.mono}}>{incident.region}</span>
+                <span style={{fontSize:7,color:col,border:`1px solid ${col}55`,background:`${col}14`,padding:"1px 4px",borderRadius:2,fontFamily:C.mono}}>{sev}</span>
+              </div>
+              <div style={{fontSize:9,color:C.text,lineHeight:1.4,marginBottom:5}}>{incident.title}</div>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:5}}>
+                <span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>SRC {incident.sourceCount}</span>
+                <span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>EVT {incident.eventCount}</span>
+                <span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>SCORE {incident.severityScore}</span>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:7,color:C.textDim,fontFamily:C.mono}}>
+                <span>{new Date(incident.firstSeen).toISOString().slice(11,16)}–{new Date(incident.lastUpdated).toISOString().slice(11,16)} UTC</span>
+                <span style={{color:C.cyan}}>JUMP ↗</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      {topIncidents.length===0 && <div style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>No incidents detected in selected timeframe.</div>}
+    </div>
+  );
+}
+
 /* ─── RIGHT PANEL ──────────────────────────────────────────────── */
-function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,setWatchItems,heuristicAlerts,heuristicSummary,watchlistSummary}){
+function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,setWatchItems,heuristicAlerts,heuristicSummary,watchlistSummary,incidents,onFocusIncident}){
   const [tab,setTab]=useState("monitor");
   const [evFilter,setEvFilter]=useState("ALL");
   const [expanded,setExpanded]=useState(null);
@@ -1001,6 +1071,7 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
       </div>
 
       <AlertStrip heuristicAlerts={heuristicAlerts}/>
+      <IncidentPanel incidents={incidents} onFocusIncident={onFocusIncident}/>
 
       <div ref={tabRowRef} style={{display:"flex",border:`1px solid ${C.border}`,borderRadius:8,flexShrink:0,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"thin",padding:"6px",gap:5,WebkitOverflowScrolling:"touch",background:"rgba(10,14,20,0.75)"}}>
         {TABS.map(t=>(
@@ -1265,6 +1336,7 @@ export default function GEOINTv10(){
   const [timeRange,setTimeRange]=useState(TIME_RANGES[3]);
   const [watchItems,setWatchItems]=useState(() => DEFAULT_WATCH_TERMS.map((item) => createWatchItem(item)).filter(Boolean));
   const [activeOverlay,setActiveOverlay]=useState("chat");
+  const [incidentFocusRequest,setIncidentFocusRequest]=useState(null);
   const mapShellRef=useRef(null);
   const timezoneWrapRef=useRef(null);
   const usedTickers=useRef(new Set());
@@ -1280,6 +1352,7 @@ export default function GEOINTv10(){
   }), [filteredFeed.events, filteredFeed.alerts, watchItems, timeRange.hours]);
   const heuristicSummary = useMemo(() => summarizeHeuristicAlerts({ heuristicAlerts, watchItems }), [heuristicAlerts, watchItems]);
   const watchlistSummary = useMemo(() => buildWatchlistSummary({ events: filteredFeed.events, watchItems }), [filteredFeed.events, watchItems]);
+  const incidents = useMemo(() => detectIncidents({ events: filteredFeed.events }), [filteredFeed.events]);
 
   useEffect(()=>{const t=setInterval(()=>setBlink(b=>!b),900);return()=>clearInterval(t);},[]);
   useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t);},[]);
@@ -1363,7 +1436,7 @@ export default function GEOINTv10(){
 
         <main style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
           <div ref={mapShellRef} style={{height:"56%",minHeight:320,borderBottom:`1px solid ${C.border}`,position:"relative",isolation:"isolate"}}>
-            <MapView selected={selected} setSelected={setSelected} visibleTrajectories={filteredFeed.trajectories} visibleEvents={filteredFeed.events}/>
+            <MapView selected={selected} setSelected={setSelected} visibleTrajectories={filteredFeed.trajectories} visibleEvents={filteredFeed.events} incidentFocusRequest={incidentFocusRequest}/>
             <div style={{position:"absolute",right:12,bottom:92,zIndex:500,display:"flex",flexDirection:"column",gap:6,padding:6,border:`1px solid ${C.border}`,borderRadius:8,background:"rgba(6,11,18,0.78)",backdropFilter:"blur(3px)"}}>
               <button aria-label="Open AI analysis panel" onClick={()=>{setAiOpen(v=>!v);setActiveOverlay("ai");}} style={floatingBtn} title="AI Analysis"><ControlIcon type="ai"/></button>
               <button aria-label="Open live chat panel" onClick={()=>{setChatOpen(v=>!v);setActiveOverlay("chat");}} style={floatingBtn} title="Live Chat"><ControlIcon type="chat"/></button>
@@ -1375,7 +1448,7 @@ export default function GEOINTv10(){
           </div>
 
           <div style={{flex:1,minHeight:0,overflow:"hidden"}}>
-            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed} watchItems={watchItems} setWatchItems={setWatchItems} heuristicAlerts={heuristicAlerts} heuristicSummary={heuristicSummary} watchlistSummary={watchlistSummary}/>
+            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed} watchItems={watchItems} setWatchItems={setWatchItems} heuristicAlerts={heuristicAlerts} heuristicSummary={heuristicSummary} watchlistSummary={watchlistSummary} incidents={incidents} onFocusIncident={(incident)=>setIncidentFocusRequest({ incidentId: incident.incidentId, eventIds: incident.eventIds })}/>
           </div>
         </main>
       </div>
