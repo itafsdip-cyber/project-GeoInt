@@ -6,7 +6,7 @@ import { clusterEventsForZoom, precisionRadiusKm } from "./services/data/mapClus
 import { buildHeuristicAlerts, summarizeHeuristicAlerts, ALERT_TYPES } from "./services/intelligence/alertingService";
 import { WATCH_ITEM_TYPES, createWatchItem, matchEventAgainstWatchlist, buildWatchlistSummary } from "./services/intelligence/watchlistService";
 import { detectIncidents } from "./services/intelligence/incidentDetectionService";
-import { loadPersistedState, savePersistedState, loadSavedSessions, saveSessionSnapshot, deleteSessionSnapshot, appendHistorySnapshot, loadHistoryStore, clearHistoryStore, historyStoreUsage } from "./services/intelligence/persistenceService";
+import { loadPersistedState, savePersistedState, loadSavedSessions, saveSessionSnapshot, deleteSessionSnapshot, appendHistorySnapshot, loadHistoryStore, clearHistoryStore, historyStoreUsage, importSessionSnapshots } from "./services/intelligence/persistenceService";
 import { generateIncidentSummary } from "./services/intelligence/incidentSummaryService";
 import { computeTrendAnalytics, TREND_WINDOWS } from "./services/intelligence/trendAnalyticsService";
 import { testLocalLlmConnection } from "./services/intelligence/localLlmService";
@@ -1112,7 +1112,7 @@ function SettingsPanel({
     }
   };
 
-  return <div style={{position:"absolute",top:62,right:16,zIndex:2200,width:420,maxHeight:"80vh",overflow:"auto",...panelShell,padding:10}}>
+  return <div style={{position:"absolute",top:62,right:8,zIndex:2200,width:"min(420px, calc(100vw - 16px))",maxHeight:"80vh",overflow:"auto",...panelShell,padding:10}}>
     <div style={{fontSize:9,color:C.cyan,fontFamily:C.mono,letterSpacing:1.2,marginBottom:8}}>SETTINGS</div>
 
     <div style={{border:`1px solid ${C.border}`,borderRadius:4,padding:8,marginBottom:8,background:C.panel}}>
@@ -1694,12 +1694,14 @@ export default function GEOINTv10(){
   };
 
   const themed = { ...C, ...(THEMES[themeId] || THEMES.tactical) };
+  Object.assign(C, themed);
 
   const resetSettings = () => {
     setThemeId("tactical");
-    setUiPrefs(DEFAULT_UI_PREFS);
+    setUiPrefs({ ...DEFAULT_UI_PREFS });
     setTimezone(TIMEZONES[1]);
-    setAiConfig(DEFAULT_AI_CONFIG);
+    setAiConfig({ ...DEFAULT_AI_CONFIG, localLlm: { ...DEFAULT_AI_CONFIG.localLlm } });
+    setLlmStatus({ status: "", detail: "" });
   };
 
   const testLlm = async () => {
@@ -1724,7 +1726,7 @@ export default function GEOINTv10(){
 
   const importSessions = (payload) => {
     if (!Array.isArray(payload?.savedSessions)) return;
-    setSavedSessions(payload.savedSessions.slice(0, 12));
+    setSavedSessions(importSessionSnapshots(payload.savedSessions));
   };
 
   const floatingBtn={
