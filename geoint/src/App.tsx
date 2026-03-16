@@ -1122,7 +1122,7 @@ function SettingsPanel({
     }
   };
 
-  return <div style={{position:"absolute",top:62,right:8,zIndex:2200,width:"min(420px, calc(100vw - 16px))",maxHeight:"calc(100vh - 76px)",overflow:"auto",overscrollBehavior:"contain",...panelShell,padding:10}}>
+  return <div style={{position:"absolute",top:62,right:8,zIndex:2200,width:"min(420px, calc(100vw - 16px))",maxHeight:"calc(100vh - 76px)",overflow:"auto",overscrollBehavior:"auto",...panelShell,padding:10}}>
     <div style={{fontSize:9,color:C.cyan,fontFamily:C.mono,letterSpacing:1.2,marginBottom:8}}>SETTINGS</div>
 
     <div style={{border:`1px solid ${C.border}`,borderRadius:4,padding:8,marginBottom:8,background:C.panel}}>
@@ -1765,7 +1765,8 @@ export default function GEOINTv10(){
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@700;900&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-        html,body,#root{height:100%;overflow:hidden;background:#020305;}
+        html,body,#root{min-height:100%;background:#020305;}
+        html,body{overflow-x:hidden;overflow-y:auto;}
         ::-webkit-scrollbar{width:6px;height:6px;}
         ::-webkit-scrollbar-track{background:#020305;}
         ::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#1f2a38,#2d3d52);border-radius:999px;border:1px solid #1b232f;}
@@ -1779,7 +1780,7 @@ export default function GEOINTv10(){
 
       {searchOpen&&<GlobalSearch onClose={()=>setSearch(false)}/>}
 
-      <div style={{height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden",background:themed.bg,fontFamily:C.mono}}>
+      <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",background:themed.bg,fontFamily:C.mono}}>
         <header style={{background:"linear-gradient(180deg,#04070b,#04060a)",borderBottom:`1px solid ${C.border}`,height:56,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 18px 0 20px",flexShrink:0,position:"relative",boxShadow:"0 8px 20px rgba(0,0,0,0.28)",gap:12}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             <div style={{fontFamily:C.head,fontSize:20,fontWeight:900,letterSpacing:4.3,color:"#fff",textShadow:"0 0 18px rgba(0,229,200,0.25)"}}>GEO<span style={{color:C.cyan}}>INT</span></div>
@@ -1799,8 +1800,8 @@ export default function GEOINTv10(){
 
         <Ticker items={tickerItems}/>
 
-        <main style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
-          <div ref={mapShellRef} style={{height:"56%",minHeight:320,borderBottom:`1px solid ${C.border}`,position:"relative",isolation:"isolate"}}>
+        <main style={{display:"flex",flexDirection:"column",minHeight:"calc(100vh - 86px)",flex:1}}>
+          <div ref={mapShellRef} style={{height:"clamp(320px, 56vh, 680px)",borderBottom:`1px solid ${C.border}`,position:"relative",isolation:"isolate"}}>
             <MapView selected={selected} setSelected={setSelected} visibleTrajectories={filteredFeed.trajectories} visibleEvents={filteredFeed.events} incidentFocusRequest={incidentFocusRequest}/>
             <div style={{position:"absolute",right:12,bottom:92,zIndex:500,display:"flex",flexDirection:"column",gap:6,padding:6,border:`1px solid ${C.border}`,borderRadius:8,background:"rgba(6,11,18,0.78)",backdropFilter:"blur(3px)"}}>
               <button aria-label="Open AI analysis panel" onClick={()=>{setAiOpen(v=>!v);setActiveOverlay("ai");}} style={floatingBtn} title="AI Analysis"><ControlIcon type="ai"/></button>
@@ -1812,7 +1813,7 @@ export default function GEOINTv10(){
             {chatOpen&&<DraggablePanel boundsRef={mapShellRef} initialPosition={{top:28,left:Math.max(10,(mapShellRef.current?.clientWidth||1000)-470)}} zIndex={activeOverlay==="chat"?660:640} width={430} maxWidth="45vw" height="76%" title="LIVE CHAT" onClose={()=>setChatOpen(false)}><div onPointerDown={()=>setActiveOverlay("chat")} style={{height:"100%"}}><ChatRoom compact onClose={()=>setChatOpen(false)}/></div></DraggablePanel>}
           </div>
 
-          <div style={{flex:1,minHeight:0,overflow:"hidden"}}>
+          <div style={{flex:1,minHeight:320}}>
             <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed} watchItems={watchItems} setWatchItems={setWatchItems} heuristicAlerts={heuristicAlerts} heuristicSummary={heuristicSummary} watchlistSummary={watchlistSummary} incidents={incidents} selectedTimezone={timezone} savedSessions={savedSessions} onSaveSession={saveCurrentSession} onLoadSession={loadSession} onDeleteSession={deleteSession} onFocusIncident={(incident)=>setIncidentFocusRequest({ incidentId: incident.incidentId, eventIds: incident.eventIds })} trendWindowId={trendWindowId} setTrendWindowId={setTrendWindowId} trendAnalytics={trendAnalytics} aiConfig={aiConfig}/>
           </div>
         </main>
