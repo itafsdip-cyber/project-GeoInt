@@ -1,5 +1,6 @@
 export type VerificationLevel = 'VERIFIED' | 'HEURISTIC' | 'INFERRED' | 'UNKNOWN';
-export type GeolocationPrecision = 'EXACT' | 'APPROXIMATE' | 'REGION' | 'UNKNOWN';
+export type GeoPrecision = 'EXACT' | 'APPROXIMATE' | 'REGION' | 'UNKNOWN';
+export type GeolocationPrecision = GeoPrecision;
 export type NarrativeStatus = 'EMERGING' | 'TRENDING' | 'STABLE' | 'DISPUTED' | 'DECLINING';
 export type SourceHealthState = 'ACTIVE' | 'AUTH_MISSING' | 'RATE_LIMITED' | 'STALE' | 'UNAVAILABLE';
 export type OverlayTrackType = 'MARITIME' | 'AIR' | 'FIRE' | 'HOTSPOT' | 'SATELLITE';
@@ -10,6 +11,17 @@ export interface SourceReference {
   url?: string;
   collectedAt: string;
   health: SourceHealthState;
+}
+
+export interface GeoPoint {
+  latitude: number;
+  longitude: number;
+}
+
+export interface ActorRef {
+  actorId: string;
+  label: string;
+  role?: string;
 }
 
 export interface TrajectoryMetadata {
@@ -33,6 +45,7 @@ export interface IntelligenceEvent {
   uncertaintyRadiusKm?: number;
   trajectory?: TrajectoryMetadata;
   references: SourceReference[];
+  actors?: ActorRef[];
 }
 
 export interface Incident {
@@ -42,6 +55,15 @@ export interface Incident {
   verificationLevel: VerificationLevel;
   confidenceNote?: string;
   intelligenceGaps?: string[];
+}
+
+export interface NarrativeSignal {
+  signalId: string;
+  narrativeId: string;
+  sourceId: string;
+  observedAt: string;
+  amplificationScore: number;
+  credibilityDelta: number;
 }
 
 export interface AnalystNote {
@@ -65,6 +87,7 @@ export interface BriefingDocument {
 
 export interface EntityNode { entityId: string; label: string; aliases: string[]; firstSeen: string; lastSeen: string; }
 export interface EntityRelation { relationId: string; fromEntityId: string; toEntityId: string; edgeType: string; weight: number; firstSeen: string; lastSeen: string; }
+export type Entity = EntityNode;
 
 export interface NarrativeCluster {
   narrativeId: string;
