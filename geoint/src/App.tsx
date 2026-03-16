@@ -375,7 +375,10 @@ function MapView({selected,setSelected,visibleTrajectories,visibleEvents,timelin
   useEffect(()=>{
     if(leafRef.current) return;
     const init=()=>{
-      const L=window.L; if(!L||!mapRef.current) return;
+      const L=window.L; if(!L||!mapRef.current||leafRef.current) return;
+      if (mapRef.current._leaflet_id) {
+        mapRef.current._leaflet_id = undefined;
+      }
 
       /* map */
       const map=L.map(mapRef.current,{center:[28,46],zoom:4,zoomControl:false,attributionControl:false});
@@ -1890,8 +1893,6 @@ function GEOINTv10(){
   );
 }
   
-import IntelligenceWorkspace from './app/workspace/IntelligenceWorkspace';
-
 export default function App() {
-  return <IntelligenceWorkspace />;
+  return <GEOINTv10 />;
 }
