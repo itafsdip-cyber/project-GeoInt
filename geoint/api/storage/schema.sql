@@ -121,3 +121,20 @@ CREATE TABLE IF NOT EXISTS watchlists (
   payload TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS watchlist_alerts (
+  alert_id TEXT PRIMARY KEY,
+  watchlist_id TEXT,
+  payload TEXT NOT NULL,
+  created_at TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_watchlist_alerts_watchlist_id ON watchlist_alerts(watchlist_id);
+CREATE INDEX IF NOT EXISTS idx_watchlist_alerts_created_at ON watchlist_alerts(created_at);
+
+CREATE TABLE IF NOT EXISTS investigations (
+  investigation_id TEXT PRIMARY KEY,
+  payload TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_investigations_updated_at ON investigations(updated_at);

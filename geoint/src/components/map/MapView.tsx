@@ -12,11 +12,13 @@ export default function MapView({
   overlays,
   selectedEntity,
   timelineSelection = [],
+  highlightedRecordIds = [],
 }: {
   events: IntelligenceEvent[];
   overlays: OverlayTrack[];
   selectedEntity?: Entity;
   timelineSelection?: TimelineItem[];
+  highlightedRecordIds?: string[];
 }) {
   const incidents = incidentLayer(events);
   const trajectories = trajectoryLayer(events);
@@ -25,5 +27,5 @@ export default function MapView({
   const focused = entityFocusLayer(events, selectedEntity);
   const timelineHighlights = timelineHighlightLayer(timelineSelection, events, overlays);
 
-  return <section style={{ border: '1px solid #1b232f', padding: 8 }}><div style={{ color: '#00e5c8', fontSize: 11 }}>TACTICAL MAP</div><div style={{ fontSize: 11 }}>Incidents {incidents.length} · Trajectories {trajectories.length} · Overlay Tracks {tracks.length} · Uncertainty {uncertain.length} · Entity Focus {focused.length} · Timeline Highlights {timelineHighlights.length}</div></section>;
+  return <section style={{ border: '1px solid #1b232f', padding: 8 }}><div style={{ color: '#00e5c8', fontSize: 11 }}>TACTICAL MAP</div><div style={{ fontSize: 11 }}>Incidents {incidents.length} · Trajectories {trajectories.length} · Overlay Tracks {tracks.length} · Uncertainty {uncertain.length} · Entity Focus {focused.length} · Timeline Highlights {timelineHighlights.length} · Analysis Highlights {highlightedRecordIds.length}</div><div style={{ marginTop: 4, fontSize: 9, color: '#8fa2b6' }}>Highlights are visualization only; incidents and overlays remain separate intelligence layers.</div></section>;
 }

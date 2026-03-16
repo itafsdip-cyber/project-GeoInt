@@ -4,6 +4,16 @@ export type GeolocationPrecision = GeoPrecision;
 export type NarrativeStatus = 'EMERGING' | 'TRENDING' | 'STABLE' | 'DISPUTED' | 'DECLINING';
 export type SourceHealthState = 'ACTIVE' | 'AUTH_MISSING' | 'RATE_LIMITED' | 'STALE' | 'UNAVAILABLE' | 'DEGRADED' | 'UNKNOWN';
 export type OverlayTrackType = 'MARITIME' | 'AIR' | 'FIRE' | 'HOTSPOT' | 'SATELLITE';
+export type IntelligenceNodeType = 'actor' | 'entity' | 'incident' | 'region' | 'narrative' | 'source' | 'vessel' | 'aircraft';
+export type IntelligenceEdgeType =
+  | 'CO_OCCURS_WITH'
+  | 'MENTIONED_IN_INCIDENT'
+  | 'OPERATES_IN_REGION'
+  | 'ATTRIBUTED_TO'
+  | 'AMPLIFIES_NARRATIVE'
+  | 'SOURCE_REPORTS_ON'
+  | 'CONNECTED_TO_VESSEL'
+  | 'CONNECTED_TO_AIRCRAFT';
 
 export interface SourceReference {
   sourceId: string;
@@ -46,6 +56,13 @@ export interface IntelligenceEvent {
   trajectory?: TrajectoryMetadata;
   references: SourceReference[];
   actors?: ActorRef[];
+  source?: string;
+  providerCategory?: string;
+  reliability?: number;
+  verificationStatus?: string;
+  metadata?: Record<string, unknown>;
+  category?: string;
+  tags?: string[];
 }
 
 export interface Incident {
@@ -55,6 +72,11 @@ export interface Incident {
   verificationLevel: VerificationLevel;
   confidenceNote?: string;
   intelligenceGaps?: string[];
+  region?: string;
+  primaryCategory?: string;
+  sourceSet?: string[];
+  involvedActors?: string[];
+  categories?: string[];
 }
 
 export interface NarrativeSignal {
@@ -64,6 +86,8 @@ export interface NarrativeSignal {
   observedAt: string;
   amplificationScore: number;
   credibilityDelta: number;
+  platform?: string;
+  disputed?: boolean;
 }
 
 export interface AnalystNote {
@@ -98,8 +122,27 @@ export interface BriefingDocument {
   sections: BriefingSection[];
 }
 
-export interface EntityNode { entityId: string; label: string; aliases: string[]; firstSeen: string; lastSeen: string; }
-export interface EntityRelation { relationId: string; fromEntityId: string; toEntityId: string; edgeType: string; weight: number; firstSeen: string; lastSeen: string; }
+export interface EntityNode {
+  entityId: string;
+  label: string;
+  aliases: string[];
+  firstSeen: string;
+  lastSeen: string;
+  type?: IntelligenceNodeType;
+  linkedIncidentCount?: number;
+  linkedNoteCount?: number;
+  linkedNarrativeCount?: number;
+}
+export interface EntityRelation {
+  relationId: string;
+  fromEntityId: string;
+  toEntityId: string;
+  edgeType: IntelligenceEdgeType | string;
+  weight: number;
+  firstSeen: string;
+  lastSeen: string;
+  caveat?: string;
+}
 export type Entity = EntityNode;
 
 export interface NarrativeCluster {
@@ -111,6 +154,15 @@ export interface NarrativeCluster {
   sourceCount: number;
   platformCount: number;
   confidenceWarning?: string;
+  keywords?: string[];
+  eventIds?: string[];
+  relatedIncidentIds?: string[];
+  relatedEntityIds?: string[];
+  relatedNoteIds?: string[];
+  sourceCredibilityMix?: { high: number; medium: number; low: number };
+  disputedIndicators?: number;
+  amplificationScore?: number;
+  caveatNote?: string;
 }
 
 export interface OverlayTrack {
@@ -125,4 +177,68 @@ export interface OverlayTrack {
   verificationLevel: VerificationLevel;
   sourceReference?: SourceReference;
   locationPrecision?: GeoPrecision;
+}
+
+export interface CorrelationCandidate {
+  id: string;
+  correlationType: string;
+  score: number;
+  rationale: string[];
+  caveat: string;
+  linkedRecordIds: string[];
+  breakdown: Record<string, number>;
+  pinned?: boolean;
+}
+
+export interface SearchResult {
+  id: string;
+  type: string;
+  title: string;
+  timestamp: string;
+  sourceCount: number;
+  confidenceHint: string;
+  caveatHint?: string;
+  linkedIds?: string[];
+}
+
+export type WatchlistType = 'ENTITY' | 'KEYWORD' | 'NARRATIVE' | 'SOURCE' | 'REGION' | 'OVERLAY_TYPE';
+
+export interface WatchlistEntry {
+  id: string;
+  title: string;
+  type: WatchlistType;
+  criteria: string;
+  createdAt: string;
+  updatedAt: string;
+  enabled: boolean;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  analystOwner: string;
+  tags: string[];
+}
+
+export interface WatchlistAlert {
+  id: string;
+  watchlistId: string;
+  matchedObjectType: string;
+  matchedObjectId: string;
+  reason: string;
+  createdAt: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  read: boolean;
+}
+
+export interface InvestigationSession {
+  id: string;
+  title: string;
+  summary: string;
+  createdAt: string;
+  updatedAt: string;
+  selectedEntityIds: string[];
+  selectedIncidentIds: string[];
+  selectedNarrativeIds: string[];
+  selectedOverlayIds: string[];
+  savedQuery?: string;
+  savedFilters?: Record<string, unknown>;
+  linkedNoteIds: string[];
+  linkedBriefingIds: string[];
 }

@@ -19,6 +19,9 @@ const { registerProviderRoutes } = require('./api/routes/providers.cjs');
 const { registerSourceRoutes } = require('./api/routes/sources.cjs');
 const { registerNotesRoutes } = require('./api/routes/notes.cjs');
 const { registerBriefingsRoutes } = require('./api/routes/briefings.cjs');
+const { registerInvestigationRoutes } = require('./api/routes/investigations.cjs');
+const { registerWatchlistRoutes } = require('./api/routes/watchlists.cjs');
+const { registerSearchRoutes } = require('./api/routes/search.cjs');
 const { createConnectorRunner } = require('./api/connectors/connectorRunner.cjs');
 const { fetchAisOverlay } = require('./api/connectors/ais.cjs');
 const { fetchAdsbOverlay } = require('./api/connectors/adsb.cjs');
@@ -139,6 +142,9 @@ registerProviderRoutes({ addRoute });
 registerSourceRoutes({ addRoute, storage });
 registerNotesRoutes({ addRoute, storage });
 registerBriefingsRoutes({ addRoute, storage });
+registerSearchRoutes({ addRoute, storage });
+registerWatchlistRoutes({ addRoute, storage });
+registerInvestigationRoutes({ addRoute, storage });
 
 const server = http.createServer(async (rawReq, rawRes) => {
   setCors(rawReq, rawRes);

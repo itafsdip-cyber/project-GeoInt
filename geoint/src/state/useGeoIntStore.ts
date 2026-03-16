@@ -9,10 +9,13 @@ import type {
   NarrativeCluster,
   OverlayTrack,
   OverlayTrackType,
+  InvestigationSession,
+  WatchlistAlert,
+  WatchlistEntry,
 } from '../types/intelligence';
 
-const SESSION_KEY = 'geoint-session-v3';
-const SESSION_VERSION = 3;
+const SESSION_KEY = 'geoint-session-v4';
+const SESSION_VERSION = 4;
 
 export interface AIProviderSettings {
   providerType: 'none' | 'hosted-openai-compatible' | 'user-openai-compatible' | 'user-ollama-compatible';
@@ -37,6 +40,15 @@ export interface GeoIntState {
   relations: EntityRelation[];
   narratives: NarrativeCluster[];
   overlayTracks: OverlayTrack[];
+
+  watchlists: WatchlistEntry[];
+  watchlistAlerts: WatchlistAlert[];
+  investigations: InvestigationSession[];
+  selectedInvestigationId?: string;
+  searchQuery: string;
+  graphFocusState?: string;
+  timelineFilterState?: string;
+  mapHighlightIds: string[];
   selectedIncidentId?: string;
   pinnedIncidentIds: string[];
   briefingSelectionId?: string;
@@ -63,6 +75,16 @@ export interface GeoIntStore {
     toggleOverlay: (overlayType: OverlayTrackType) => void;
     setActiveNarratives: (narrativeIds: string[]) => void;
     setAIProvider: (partial: Partial<AIProviderSettings>) => void;
+
+    upsertWatchlist: (watchlist: WatchlistEntry) => void;
+    setWatchlistAlerts: (alerts: WatchlistAlert[]) => void;
+    upsertInvestigation: (investigation: InvestigationSession) => void;
+    removeInvestigation: (investigationId: string) => void;
+    selectInvestigation: (investigationId?: string) => void;
+    setSearchQuery: (query: string) => void;
+    setGraphFocusState: (entityId?: string) => void;
+    setTimelineFilterState: (state: string) => void;
+    setMapHighlights: (ids: string[]) => void;
   };
 }
 
@@ -77,6 +99,14 @@ const initialState: GeoIntState = {
   relations: [],
   narratives: [],
   overlayTracks: [],
+  watchlists: [],
+  watchlistAlerts: [],
+  investigations: [],
+  selectedInvestigationId: undefined,
+  searchQuery: '',
+  graphFocusState: undefined,
+  timelineFilterState: undefined,
+  mapHighlightIds: [],
   selectedIncidentId: undefined,
   pinnedIncidentIds: [],
   briefingSelectionId: undefined,
@@ -101,6 +131,11 @@ function sanitizePersisted(raw: any) {
     briefingSelectionId: typeof raw.briefingSelectionId === 'string' ? raw.briefingSelectionId : undefined,
     selectedEntityId: typeof raw.selectedEntityId === 'string' ? raw.selectedEntityId : undefined,
     activeNarrativeIds: Array.isArray(raw.activeNarrativeIds) ? raw.activeNarrativeIds.filter((x: unknown) => typeof x === 'string') : [],
+    selectedInvestigationId: typeof raw.selectedInvestigationId === 'string' ? raw.selectedInvestigationId : undefined,
+    searchQuery: typeof raw.searchQuery === 'string' ? raw.searchQuery : '',
+    graphFocusState: typeof raw.graphFocusState === 'string' ? raw.graphFocusState : undefined,
+    timelineFilterState: typeof raw.timelineFilterState === 'string' ? raw.timelineFilterState : undefined,
+    mapHighlightIds: Array.isArray(raw.mapHighlightIds) ? raw.mapHighlightIds.filter((x: unknown) => typeof x === 'string') : [],
     overlayToggles,
     aiProvider: typeof raw.aiProvider === 'object' && raw.aiProvider
       ? {
@@ -125,6 +160,11 @@ function persistState(state: GeoIntState) {
     briefingSelectionId: state.briefingSelectionId,
     selectedEntityId: state.selectedEntityId,
     activeNarrativeIds: state.activeNarrativeIds,
+    selectedInvestigationId: state.selectedInvestigationId,
+    searchQuery: state.searchQuery,
+    graphFocusState: state.graphFocusState,
+    timelineFilterState: state.timelineFilterState,
+    mapHighlightIds: state.mapHighlightIds,
     overlayToggles: state.overlayToggles,
     aiProvider: {
       providerType: state.aiProvider.providerType,
@@ -193,6 +233,24 @@ const actions: GeoIntStore['actions'] = {
   },
   setActiveNarratives(narrativeIds) { setState((state) => ({ ...state, activeNarrativeIds: narrativeIds, session: { ...state.session, lastUpdatedAt: now() } })); },
   setAIProvider(partial) { setState((state) => ({ ...state, aiProvider: { ...state.aiProvider, ...partial }, session: { ...state.session, lastUpdatedAt: now() } })); },
+
+  upsertWatchlist(watchlist) {
+    setState((state) => ({ ...state, watchlists: [...state.watchlists.filter((item) => item.id !== watchlist.id), watchlist], session: { ...state.session, lastUpdatedAt: now() } }));
+  },
+  setWatchlistAlerts(alerts) {
+    setState((state) => ({ ...state, watchlistAlerts: alerts, session: { ...state.session, lastUpdatedAt: now() } }));
+  },
+  upsertInvestigation(investigation) {
+    setState((state) => ({ ...state, investigations: [...state.investigations.filter((item) => item.id !== investigation.id), investigation], session: { ...state.session, lastUpdatedAt: now() } }));
+  },
+  removeInvestigation(investigationId) {
+    setState((state) => ({ ...state, investigations: state.investigations.filter((item) => item.id !== investigationId), session: { ...state.session, lastUpdatedAt: now() } }));
+  },
+  selectInvestigation(investigationId) { setState((state) => ({ ...state, selectedInvestigationId: investigationId, session: { ...state.session, lastUpdatedAt: now() } })); },
+  setSearchQuery(query) { setState((state) => ({ ...state, searchQuery: query, session: { ...state.session, lastUpdatedAt: now() } })); },
+  setGraphFocusState(entityId) { setState((state) => ({ ...state, graphFocusState: entityId, session: { ...state.session, lastUpdatedAt: now() } })); },
+  setTimelineFilterState(timelineFilterState) { setState((state) => ({ ...state, timelineFilterState, session: { ...state.session, lastUpdatedAt: now() } })); },
+  setMapHighlights(ids) { setState((state) => ({ ...state, mapHighlightIds: ids, session: { ...state.session, lastUpdatedAt: now() } })); },
 };
 
 export function useGeoIntStore<T>(selector: (store: GeoIntStore) => T) {

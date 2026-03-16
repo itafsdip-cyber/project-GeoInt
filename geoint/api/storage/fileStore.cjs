@@ -24,6 +24,8 @@ function createInitialStore() {
     sources: [],
     ingestion_runs: [],
     watchlists: [],
+    watchlist_alerts: [],
+    investigations: [],
   };
 }
 
@@ -125,6 +127,25 @@ function createFileStore() {
       writeStore(current);
       return before !== current.briefings.length;
     },
+
+    getWatchlists: () => getCollection('watchlists'),
+    saveWatchlists: (watchlists = []) => saveCollection('watchlists', 'id', watchlists),
+    getWatchlistAlerts: () => [...getCollection('watchlist_alerts')].sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt)),
+    saveWatchlistAlerts: (alerts = []) => saveCollection('watchlist_alerts', 'id', alerts),
+    getInvestigations: () => [...getCollection('investigations')].sort((a, b) => toMillis(b.updatedAt) - toMillis(a.updatedAt)),
+    saveInvestigation(investigation) {
+      if (!investigation?.id) return null;
+      const [saved] = saveCollection('investigations', 'id', [{ ...investigation, updatedAt: investigation.updatedAt || nowIso() }]).filter((item) => item.id === investigation.id);
+      return saved;
+    },
+    deleteInvestigation(id) {
+      const current = readStore();
+      const before = current.investigations.length;
+      current.investigations = current.investigations.filter((item) => item.id !== id);
+      writeStore(current);
+      return before !== current.investigations.length;
+    },
+
     recordIngestionRun(run) {
       const current = readStore();
       current.ingestion_runs = applyRunRetention([...(current.ingestion_runs || []), run]);

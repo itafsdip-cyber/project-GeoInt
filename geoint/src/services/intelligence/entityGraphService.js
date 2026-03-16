@@ -81,3 +81,29 @@ export function graphSummary(graph = {}) {
     topEdges,
   };
 }
+
+export function buildEntityGraphModel({ events = [], incidents = [], narratives = [], notes = [] }) {
+  const graph = buildEntityGraph({ events, incidents });
+  const nodes = (graph.nodes || []).map((node) => ({
+    entityId: node.id,
+    label: node.label,
+    aliases: [],
+    firstSeen: new Date().toISOString(),
+    lastSeen: new Date().toISOString(),
+    type: node.type,
+    linkedIncidentCount: 0,
+    linkedNoteCount: 0,
+    linkedNarrativeCount: 0,
+  }));
+  const edges = (graph.edges || []).map((edge, index) => ({
+    relationId: `rel-${index}`,
+    fromEntityId: edge.from,
+    toEntityId: edge.to,
+    edgeType: edge.type === 'actor-actor' ? 'CO_OCCURS_WITH' : 'SOURCE_REPORTS_ON',
+    weight: edge.weight,
+    firstSeen: new Date().toISOString(),
+    lastSeen: new Date().toISOString(),
+    caveat: edge.type === 'actor-actor' ? 'Co-occurrence only; not command/control proof.' : undefined,
+  }));
+  return { nodes, edges, narratives, notes };
+}
