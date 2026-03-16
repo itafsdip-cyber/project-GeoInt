@@ -6,6 +6,8 @@ const HISTORY_LIMITS = {
   retentionDays: 14,
 };
 
+const SESSION_LIMIT = 12;
+
 const safeParse = (raw, fallback) => {
   try {
     return raw ? JSON.parse(raw) : fallback;
@@ -50,6 +52,28 @@ const trimByRetention = (items = [], maxItems = 500) => {
   });
 };
 
+
+const sanitizeSessionSnapshot = (snapshot = {}) => ({
+  watchItems: Array.isArray(snapshot.watchItems) ? snapshot.watchItems : undefined,
+  timeRangeId: typeof snapshot.timeRangeId === "string" ? snapshot.timeRangeId : undefined,
+  timezoneId: typeof snapshot.timezoneId === "string" ? snapshot.timezoneId : undefined,
+  trendWindowId: typeof snapshot.trendWindowId === "string" ? snapshot.trendWindowId : undefined,
+  themeId: typeof snapshot.themeId === "string" ? snapshot.themeId : undefined,
+  aiSummaryMode: typeof snapshot.aiSummaryMode === "string" ? snapshot.aiSummaryMode : undefined,
+  localLlm: snapshot.localLlm && typeof snapshot.localLlm === "object" ? snapshot.localLlm : undefined,
+  uiPrefs: snapshot.uiPrefs && typeof snapshot.uiPrefs === "object" ? snapshot.uiPrefs : undefined,
+});
+
+const sanitizeSessions = (sessions = []) => sessions
+  .filter((session) => session && typeof session === "object")
+  .map((session, index) => ({
+    id: String(session.id || `sess-import-${Date.now()}-${index}`),
+    name: String(session.name || "Session").trim().slice(0, 48) || "Session",
+    snapshot: sanitizeSessionSnapshot(session.snapshot || {}),
+    createdAt: session.createdAt || new Date().toISOString(),
+  }))
+  .slice(0, SESSION_LIMIT);
+
 const sanitizeHistoryStore = (history = {}) => {
   const events = trimByRetention(dedupeByIdentity(history.events || [], "event"), HISTORY_LIMITS.maxEvents);
   const incidents = trimByRetention(dedupeByIdentity(history.incidents || [], "incident"), HISTORY_LIMITS.maxIncidents);
@@ -67,15 +91,19 @@ export const loadPersistedState = () => {
 
 export const savePersistedState = (state) => {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    ...state,
-    savedAt: new Date().toISOString(),
-  }));
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      ...state,
+      savedAt: new Date().toISOString(),
+    }));
+  } catch {
+    // Ignore quota/private-mode storage errors so runtime remains functional.
+  }
 };
 
 export const loadSavedSessions = () => {
   const state = loadPersistedState();
-  return Array.isArray(state?.savedSessions) ? state.savedSessions : [];
+  return sanitizeSessions(Array.isArray(state?.savedSessions) ? state.savedSessions : []);
 };
 
 export const loadHistoryStore = () => {
@@ -111,7 +139,7 @@ export const saveSessionSnapshot = ({ name, snapshot }) => {
   const state = loadPersistedState() || {};
   const existing = Array.isArray(state.savedSessions) ? state.savedSessions : [];
   const sanitized = String(name || "Session").trim().slice(0, 48);
-  const next = [
+  const next = sanitizeSessions([
     {
       id: `sess-${Date.now()}`,
       name: sanitized || "Session",
@@ -119,7 +147,7 @@ export const saveSessionSnapshot = ({ name, snapshot }) => {
       createdAt: new Date().toISOString(),
     },
     ...existing,
-  ].slice(0, 12);
+  ]);
   savePersistedState({ ...state, savedSessions: next });
   return next;
 };
@@ -133,3 +161,11 @@ export const deleteSessionSnapshot = (sessionId) => {
 };
 
 export const historyLimits = HISTORY_LIMITS;
+
+
+export const importSessionSnapshots = (sessions = []) => {
+  const state = loadPersistedState() || {};
+  const next = sanitizeSessions(sessions);
+  savePersistedState({ ...state, savedSessions: next });
+  return next;
+};

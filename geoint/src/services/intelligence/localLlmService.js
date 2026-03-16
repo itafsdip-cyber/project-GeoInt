@@ -21,6 +21,8 @@ const buildPrompt = (incident) => JSON.stringify({
 
 const normalizeBaseUrl = (baseUrl) => String(baseUrl || "").trim().replace(/\/$/, "");
 
+const isValidHttpUrl = (value = "") => /^https?:\/\//i.test(String(value || ""));
+
 const extractText = (payload = {}) => {
   if (typeof payload?.response === "string") return payload.response;
   if (typeof payload?.output === "string") return payload.output;
@@ -42,6 +44,7 @@ export const testLocalLlmConnection = async (config = {}) => {
   const model = String(config.model || "").trim();
 
   if (!baseUrl || !model) return { status: "Misconfigured", detail: "Base URL and model are required." };
+  if (!isValidHttpUrl(baseUrl)) return { status: "Misconfigured", detail: "Base URL must start with http:// or https://." };
 
   try {
     if (provider === "ollama") {
@@ -53,6 +56,19 @@ export const testLocalLlmConnection = async (config = {}) => {
         return { status: "Invalid response", detail: `Model not found in Ollama list (${model}).` };
       }
       return { status: "Connected", detail: `Model available: ${model}` };
+    }
+
+    if (provider === "custom") {
+      const response = await withTimeout(`${baseUrl}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model, prompt: "ping" }),
+      }, config.timeoutMs || 5000);
+      if (!response.ok) return { status: "Unreachable", detail: `HTTP ${response.status}` };
+      const data = await response.json();
+      const text = extractText(data);
+      if (!text) return { status: "Invalid response", detail: "No text response returned." };
+      return { status: "Connected", detail: "Endpoint returned a valid response." };
     }
 
     const response = await withTimeout(`${baseUrl}/v1/models`, { method: "GET" }, config.timeoutMs || 5000);
@@ -75,7 +91,7 @@ export const generateLocalIncidentSummary = async (incident, config = {}) => {
   const timeoutMs = Number(config.timeoutMs || 10000);
   const temperature = Number.isFinite(Number(config.temperature)) ? Number(config.temperature) : 0.2;
 
-  if (!baseUrl || !model) throw new Error("Local LLM is misconfigured");
+  if (!baseUrl || !model || !isValidHttpUrl(baseUrl)) throw new Error("Local LLM is misconfigured");
 
   const prompt = buildPrompt(incident);
 
@@ -84,6 +100,17 @@ export const generateLocalIncidentSummary = async (incident, config = {}) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model, prompt, stream: false, options: { temperature } }),
+    }, timeoutMs);
+    if (!response.ok) throw new Error(`Local LLM unreachable (${response.status})`);
+    const payload = await response.json();
+    return parseSummaryJson(extractText(payload));
+  }
+
+  if (provider === "custom") {
+    const response = await withTimeout(`${baseUrl}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, prompt, temperature }),
     }, timeoutMs);
     if (!response.ok) throw new Error(`Local LLM unreachable (${response.status})`);
     const payload = await response.json();
