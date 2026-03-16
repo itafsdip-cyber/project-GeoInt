@@ -7,6 +7,7 @@ const HISTORY_LIMITS = {
 };
 
 const SESSION_LIMIT = 12;
+const WATCH_ITEM_LIMIT = 24;
 
 const safeParse = (raw, fallback) => {
   try {
@@ -19,6 +20,27 @@ const safeParse = (raw, fallback) => {
 const parseTs = (value) => new Date(value).getTime();
 
 const stableString = (value = "") => String(value || "").toLowerCase().trim();
+
+const sanitizeWatchItems = (watchItems = []) => {
+  if (!Array.isArray(watchItems)) return [];
+  return watchItems
+    .filter((item) => item && typeof item === "object")
+    .map((item, index) => {
+      const term = String(item.term || item.normalizedTerm || "").trim();
+      if (!term) return null;
+      const type = stableString(item.type) || "keyword";
+      const normalizedTerm = stableString(term);
+      return {
+        id: String(item.id || `watch-${type}-${normalizedTerm}-${index}`),
+        type,
+        term,
+        normalizedTerm,
+        createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
+      };
+    })
+    .filter(Boolean)
+    .slice(0, WATCH_ITEM_LIMIT);
+};
 
 const dedupeByIdentity = (items = [], type) => {
   const seen = new Set();
@@ -54,7 +76,7 @@ const trimByRetention = (items = [], maxItems = 500) => {
 
 
 const sanitizeSessionSnapshot = (snapshot = {}) => ({
-  watchItems: Array.isArray(snapshot.watchItems) ? snapshot.watchItems : undefined,
+  watchItems: Array.isArray(snapshot.watchItems) ? sanitizeWatchItems(snapshot.watchItems) : undefined,
   timeRangeId: typeof snapshot.timeRangeId === "string" ? snapshot.timeRangeId : undefined,
   timezoneId: typeof snapshot.timezoneId === "string" ? snapshot.timezoneId : undefined,
   trendWindowId: typeof snapshot.trendWindowId === "string" ? snapshot.trendWindowId : undefined,
@@ -84,9 +106,19 @@ const sanitizeHistoryStore = (history = {}) => {
   };
 };
 
+const sanitizePersistedState = (state) => {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return null;
+  return {
+    ...state,
+    watchItems: sanitizeWatchItems(state.watchItems),
+    savedSessions: sanitizeSessions(Array.isArray(state.savedSessions) ? state.savedSessions : []),
+    historyStore: sanitizeHistoryStore(state.historyStore || {}),
+  };
+};
+
 export const loadPersistedState = () => {
   if (typeof window === "undefined") return null;
-  return safeParse(window.localStorage.getItem(STORAGE_KEY), null);
+  return sanitizePersistedState(safeParse(window.localStorage.getItem(STORAGE_KEY), null));
 };
 
 export const savePersistedState = (state) => {
@@ -162,6 +194,7 @@ export const deleteSessionSnapshot = (sessionId) => {
 
 export const historyLimits = HISTORY_LIMITS;
 
+export { sanitizeWatchItems };
 
 export const importSessionSnapshots = (sessions = []) => {
   const state = loadPersistedState() || {};

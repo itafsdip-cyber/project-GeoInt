@@ -3,6 +3,7 @@ import { DATA_MODE } from "./normalizedEventModel";
 import { fetchLiveFeedOrFallback } from "./adapters/liveProviders";
 
 export const filterEventsByTimeRange = (items, rangeHours, now = new Date()) => {
+  if (!Array.isArray(items)) return [];
   const cutoff = now.getTime() - rangeHours * 3600000;
   return items.filter((item) => new Date(item.timestamp).getTime() >= cutoff);
 };
