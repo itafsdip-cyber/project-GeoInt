@@ -55,3 +55,11 @@ This is recalculated when filtered events change (timeframe/live refresh) and on
 - Persist disambiguation metadata (matched phrase, admin level, alt candidates).
 - Add region polygons or gazetteer-backed area centroids for non-point incidents.
 - Include per-source geolocation reliability calibration over time.
+
+
+## Trajectory derivation (missile/drone/projectile)
+- Trajectories are generated only when enough geospatial signal exists (`api/trajectory.cjs`).
+- **Exact trajectory:** requires source-backed launch + impact coordinates.
+- **Approximate trajectory:** derived from region/theater geospatial hints; rendered with explicit low precision + uncertainty metadata.
+- Precision/confidence labels are shown in map details (`exact` vs `approximate`, confidence %, uncertainty km).
+- The system never fabricates exact launch/impact data when unavailable.

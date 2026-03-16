@@ -1,7 +1,8 @@
 # Persistence and saved sessions
 
 ## Implemented now
-- Local persistence remains browser `localStorage` based.
+- Local persistence remains in browser `localStorage` for UX continuity.
+- Added lightweight backend persistence (`proxy-server.cjs` + `api/persistenceStore.cjs`) that stores deduped normalized event/incident history in `.geoint-history.json` for local-dev trend windows and replay.
 - Persisted state now includes:
   - watchlists
   - selected timeframe
@@ -45,3 +46,9 @@
 - Backend persistence with account scoping and policy controls.
 - Signed/validated session bundles for portable workflow handoff.
 - Backfill and replay APIs for longitudinal analysis across devices.
+
+
+## Backend persistence scope
+- Store: normalized events + incidents only (deduped, retention-trimmed).
+- Endpoints: `GET /history`, `POST /history/snapshot`.
+- Intended for local/dev single-node operation; not a multi-user archival database.

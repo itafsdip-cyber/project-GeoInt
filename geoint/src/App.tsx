@@ -10,6 +10,7 @@ import { loadPersistedState, savePersistedState, loadSavedSessions, saveSessionS
 import { generateIncidentSummary } from "./services/intelligence/incidentSummaryService";
 import { computeTrendAnalytics, TREND_WINDOWS } from "./services/intelligence/trendAnalyticsService";
 import { testLocalLlmConnection } from "./services/intelligence/localLlmService";
+import { fetchBackendHistory, pushBackendHistorySnapshot } from "./services/intelligence/backendHistoryService";
 
 /* ═══════════════════════════════════════════════════════════════════
    GEOINT v10 — pixel-perfect UI match to reference screenshot
@@ -276,6 +277,9 @@ const panelShell = {
 
 const providerStateStyle = (state) => {
   if (state === "active") return { color: C.green, label: "ACTIVE" };
+  if (state === "stale") return { color: C.orange, label: "STALE" };
+  if (state === "disabled") return { color: C.textDim, label: "DISABLED" };
+  if (state === "idle") return { color: C.textDim, label: "IDLE" };
   if (state === "unavailable") return { color: C.textDim, label: "UNAVAILABLE" };
   if (state === "auth_missing") return { color: C.orange, label: "AUTH MISSING" };
   if (state === "rate_limited") return { color: C.gold, label: "RATE LIMITED" };
@@ -288,8 +292,9 @@ function OsintBadge({ label, color }) {
 
 function SourceStatusPill({ provider }) {
   const state = providerStateStyle(provider.state);
+  const detail = [provider.reason, provider.lastSuccessAt ? `Last success ${new Date(provider.lastSuccessAt).toISOString().slice(0, 16)}Z` : null, provider.lastError || null].filter(Boolean).join(" · ");
   return (
-    <span title={provider.reason} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 8px",borderRadius:999,border:`1px solid ${state.color}55`,background:`${state.color}12`,fontFamily:C.mono,fontSize:8}}>
+    <span title={detail} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 8px",borderRadius:999,border:`1px solid ${state.color}55`,background:`${state.color}12`,fontFamily:C.mono,fontSize:8}}>
       <span style={{width:6,height:6,borderRadius:"50%",background:state.color,boxShadow:`0 0 8px ${state.color}`}}/>
       <span style={{color:C.text}}>{provider.name}</span>
       <span style={{color:state.color}}>{state.label}</span>
@@ -657,7 +662,7 @@ function MapView({selected,setSelected,visibleTrajectories,visibleEvents,inciden
             {selTraj.osint&&<div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap",alignItems:"center"}}>
               {(() => { const label = osintLabel(selTraj.osint); const color = osintColor(label); return <span style={{fontSize:8,color,background:`${color}1c`,border:`1px solid ${color}55`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{label}</span>; })()}
               {osintMetaBadges(selTraj.osint).map((badge)=><span key={`${selTraj.id}-${badge.label}`} style={{fontSize:7.5,color:badge.color,border:`1px solid ${badge.color}55`,background:`${badge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{badge.label}</span>)}
-              <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>SRC {selTraj.osint.crossSourceCount} · LOC {selTraj.osint.locationConfidence}%</span>
+              <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>SRC {selTraj.osint.crossSourceCount} · LOC {selTraj.osint.locationConfidence}%</span><span style={{fontSize:8,color:C.gold,fontFamily:C.mono}}>TRAJ {(selTraj.trajectoryPrecision || selTraj.metadata?.trajectoryPrecision || "unknown").toUpperCase()} · {(selTraj.trajectoryConfidence || selTraj.metadata?.trajectoryConfidence || 0)}%</span>
             </div>}
           </div>
         )}
@@ -1369,7 +1374,7 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
             <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4}}>
               {ET.map(t=>(<button key={t} onClick={()=>setEvFilter(t)} style={{background:evFilter===t?`${C.cyan}18`:"none",border:`1px solid ${evFilter===t?C.cyan:C.border}`,color:evFilter===t?C.cyan:C.textDim,padding:"3px 8px",fontSize:8,borderRadius:2,cursor:"pointer",fontFamily:C.mono}}>{t}</button>))}
             </div>
-            {((evFilter==="ALL"?filteredEvents:filteredEvents.filter(e=>(e.metadata.type||e.type)===evFilter)).length===0)&&<div style={{padding:"12px",fontSize:9,color:C.textDim,fontFamily:C.mono}}>No events in selected range/filter.</div>}
+            {((evFilter==="ALL"?filteredEvents:filteredEvents.filter(e=>(e.metadata.type||e.type)===evFilter)).length===0)&&<div style={{padding:"12px",fontSize:9,color:C.textDim,fontFamily:C.mono}}>No source-backed events available for selected range/filter. Check source health and credentials.</div>}
             {(evFilter==="ALL"?filteredEvents:filteredEvents.filter(e=>(e.metadata.type||e.type)===evFilter)).map(e=>{
               const isEx=expanded===e.id;
               const eventType=e.metadata.type||e.type;
@@ -1592,8 +1597,7 @@ export default function GEOINTv10(){
   const settingsWrapRef=useRef(null);
   const usedTickers=useRef(new Set());
 
-  const demoInput = useMemo(() => ({ alerts: ALERTS, events: EVENTS, timeline: TIMELINE, trajectories: TRAJECTORIES, sources: SOURCES }), []);
-  const { mode: dataMode, statusNote, feed } = useGeoFeed({ demoInput, refreshMs: 45000 });
+  const { mode: dataMode, statusNote, feed } = useGeoFeed({ refreshMs: 45000 });
   const filteredFeed = useFilteredGeoFeed({ feed, timeRangeHours: timeRange.hours });
   const incidents = useMemo(() => detectIncidents({ events: filteredFeed.events }), [filteredFeed.events]);
   const heuristicAlerts = useMemo(() => buildHeuristicAlerts({
@@ -1612,11 +1616,24 @@ export default function GEOINTv10(){
   }), [historyStore, trendWindowId, watchItems]);
 
   useEffect(() => {
+    let active = true;
+    fetchBackendHistory()
+      .then((remote) => {
+        if (!active || !remote) return;
+        const merged = appendHistorySnapshot({ events: remote.events || [], incidents: remote.incidents || [] });
+        setHistoryStore(merged);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
     const merged = appendHistorySnapshot({
       events: filteredFeed.events || [],
       incidents,
     });
     setHistoryStore(merged);
+    pushBackendHistorySnapshot({ events: filteredFeed.events || [], incidents }).catch(() => {});
   }, [filteredFeed.events, incidents]);
 
   useEffect(() => {
