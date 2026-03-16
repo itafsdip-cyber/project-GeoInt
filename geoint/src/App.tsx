@@ -1092,10 +1092,11 @@ function TrendPanel({ trendWindowId, setTrendWindowId, trendAnalytics }) {
 
 function SettingsPanel({
   timezone, setTimezone, themeId, setThemeId, uiPrefs, setUiPrefs,
-  aiConfig, setAiConfig, llmStatus, onTestLlm, onResetSettings,
+  aiConfig, setAiConfig, llmStatus, llmTesting, onTestLlm, onResetSettings,
   historyUsage, onClearHistory, onExportSessions, onImportSessions,
 }) {
   const [importError, setImportError] = useState("");
+  const [importSuccess, setImportSuccess] = useState("");
 
   const updateLocalLlm = (patch) => setAiConfig((prev) => ({ ...prev, localLlm: { ...prev.localLlm, ...patch } }));
 
@@ -1105,14 +1106,23 @@ function SettingsPanel({
     try {
       const raw = await file.text();
       const parsed = JSON.parse(raw);
-      onImportSessions(parsed);
-      setImportError("");
+      const result = onImportSessions(parsed);
+      if (!result?.ok) {
+        setImportSuccess("");
+        setImportError(result?.message || "Session import failed.");
+      } else {
+        setImportError("");
+        setImportSuccess(`Imported ${result.count} session${result.count === 1 ? "" : "s"}.`);
+      }
     } catch {
+      setImportSuccess("");
       setImportError("Invalid session JSON.");
+    } finally {
+      event.target.value = "";
     }
   };
 
-  return <div style={{position:"absolute",top:62,right:8,zIndex:2200,width:"min(420px, calc(100vw - 16px))",maxHeight:"80vh",overflow:"auto",...panelShell,padding:10}}>
+  return <div style={{position:"absolute",top:62,right:8,zIndex:2200,width:"min(420px, calc(100vw - 16px))",maxHeight:"calc(100vh - 76px)",overflow:"auto",overscrollBehavior:"contain",...panelShell,padding:10}}>
     <div style={{fontSize:9,color:C.cyan,fontFamily:C.mono,letterSpacing:1.2,marginBottom:8}}>SETTINGS</div>
 
     <div style={{border:`1px solid ${C.border}`,borderRadius:4,padding:8,marginBottom:8,background:C.panel}}>
@@ -1162,7 +1172,7 @@ function SettingsPanel({
         <input type="number" step="0.1" min="0" max="1" value={aiConfig.localLlm.temperature} onChange={(e)=>updateLocalLlm({temperature:Number(e.target.value)})} placeholder="Temp" style={{width:90,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,color:C.text,padding:"5px 8px",fontFamily:C.mono,fontSize:8}}/>
       </div>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
-        <button onClick={onTestLlm} style={{background:`${C.cyan}14`,border:`1px solid ${C.cyan}44`,color:C.cyan,padding:"4px 8px",fontSize:8,fontFamily:C.mono}}>TEST CONNECTION</button>
+        <button onClick={onTestLlm} disabled={llmTesting} style={{background:`${C.cyan}14`,border:`1px solid ${C.cyan}44`,color:C.cyan,padding:"4px 8px",fontSize:8,fontFamily:C.mono,opacity:llmTesting?0.65:1,cursor:llmTesting?"not-allowed":"pointer"}}>{llmTesting?"TESTING...":"TEST CONNECTION"}</button>
         <span style={{fontSize:8,color:C.text,fontFamily:C.mono}}>{llmStatus.status || "Not tested"} · {llmStatus.detail || ""}</span>
       </div>
       <div style={{border:`1px solid ${C.border}`,borderRadius:3,padding:6,background:"rgba(0,0,0,0.2)",fontSize:7.6,color:C.textDim,lineHeight:1.5,fontFamily:C.mono}}>
@@ -1179,6 +1189,7 @@ function SettingsPanel({
         <label style={{border:`1px solid ${C.border}`,padding:"4px 6px",fontSize:8,color:C.textDim,fontFamily:C.mono,cursor:"pointer"}}>IMPORT<input type="file" accept="application/json" style={{display:"none"}} onChange={handleImport}/></label>
       </div>
       {importError && <div style={{fontSize:8,color:C.red,fontFamily:C.mono,marginTop:5}}>{importError}</div>}
+      {importSuccess && <div style={{fontSize:8,color:C.green,fontFamily:C.mono,marginTop:5}}>{importSuccess}</div>}
     </div>
   </div>;
 }
@@ -1567,6 +1578,7 @@ export default function GEOINTv10(){
   const [uiPrefs, setUiPrefs] = useState(() => ({ ...DEFAULT_UI_PREFS, ...(persistedBootstrap.uiPrefs || {}) }));
   const [aiConfig, setAiConfig] = useState(() => ({ ...DEFAULT_AI_CONFIG, ...(persistedBootstrap.aiConfig || {}), localLlm: { ...DEFAULT_AI_CONFIG.localLlm, ...(persistedBootstrap.aiConfig?.localLlm || {}) } }));
   const [llmStatus, setLlmStatus] = useState({ status: "", detail: "" });
+  const [llmTesting, setLlmTesting] = useState(false);
   const [aiOpen,setAiOpen]=useState(false);
   const [chatOpen,setChatOpen]=useState(false);
   const [timeRange,setTimeRange]=useState(() => TIME_RANGES.find((range) => range.id === persistedBootstrap.timeRangeId) || TIME_RANGES[3]);
@@ -1650,11 +1662,15 @@ export default function GEOINTv10(){
     if (snap.watchItems) setWatchItems(snap.watchItems);
     if (snap.timeRangeId) setTimeRange(TIME_RANGES.find((range) => range.id === snap.timeRangeId) || TIME_RANGES[3]);
     if (snap.timezoneId) setTimezone(TIMEZONES.find((tz) => tz.id === snap.timezoneId) || TIMEZONES[1]);
-    if (snap.trendWindowId) setTrendWindowId(snap.trendWindowId);
-    if (snap.themeId) setThemeId(snap.themeId);
+    if (snap.trendWindowId) setTrendWindowId(TREND_WINDOWS.find((window) => window.id === snap.trendWindowId)?.id || "24h");
+    if (snap.themeId) setThemeId(THEMES[snap.themeId] ? snap.themeId : "tactical");
     if (snap.uiPrefs) setUiPrefs((prev) => ({ ...prev, ...snap.uiPrefs }));
     if (snap.aiSummaryMode || snap.localLlm) {
-      setAiConfig((prev) => ({ ...prev, summaryMode: snap.aiSummaryMode || prev.summaryMode, localLlm: { ...prev.localLlm, ...(snap.localLlm || {}) } }));
+      setAiConfig((prev) => ({
+        ...prev,
+        summaryMode: ["remote", "local", "heuristic"].includes(snap.aiSummaryMode) ? snap.aiSummaryMode : prev.summaryMode,
+        localLlm: { ...prev.localLlm, ...(snap.localLlm || {}) },
+      }));
     }
   };
 
@@ -1705,8 +1721,14 @@ export default function GEOINTv10(){
   };
 
   const testLlm = async () => {
-    const status = await testLocalLlmConnection(aiConfig.localLlm);
-    setLlmStatus(status);
+    setLlmTesting(true);
+    setLlmStatus({ status: "Testing", detail: "Attempting connection..." });
+    try {
+      const status = await testLocalLlmConnection(aiConfig.localLlm);
+      setLlmStatus(status);
+    } finally {
+      setLlmTesting(false);
+    }
   };
 
   const clearHistory = () => {
@@ -1725,8 +1747,11 @@ export default function GEOINTv10(){
   };
 
   const importSessions = (payload) => {
-    if (!Array.isArray(payload?.savedSessions)) return;
-    setSavedSessions(importSessionSnapshots(payload.savedSessions));
+    if (!payload || typeof payload !== "object") return { ok: false, count: 0, message: "Session payload must be a JSON object." };
+    if (!Array.isArray(payload.savedSessions)) return { ok: false, count: 0, message: "Expected a savedSessions array in import file." };
+    const imported = importSessionSnapshots(payload.savedSessions);
+    setSavedSessions(imported);
+    return { ok: true, count: imported.length };
   };
 
   const floatingBtn={
@@ -1767,7 +1792,7 @@ export default function GEOINTv10(){
             <div ref={settingsWrapRef} style={{display:"flex",alignItems:"center",gap:8,position:"relative",zIndex:1200}}>
               <span style={{color:C.textDim,fontSize:10,fontFamily:C.mono,padding:"4px 8px",background:"rgba(255,255,255,0.02)",border:`1px solid ${C.border}`,borderRadius:3,whiteSpace:"nowrap"}}>{fmtTime()}</span>
               <button onClick={()=>setSettingsOpen((v)=>!v)} style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${C.border}`,color:C.textDim,padding:"5px 9px",borderRadius:3,fontSize:11,fontFamily:C.mono,cursor:"pointer"}} title="Settings">⚙</button>
-              {settingsOpen && <SettingsPanel timezone={timezone} setTimezone={setTimezone} themeId={themeId} setThemeId={setThemeId} uiPrefs={uiPrefs} setUiPrefs={setUiPrefs} aiConfig={aiConfig} setAiConfig={setAiConfig} llmStatus={llmStatus} onTestLlm={testLlm} onResetSettings={resetSettings} historyUsage={historyStoreUsage(historyStore)} onClearHistory={clearHistory} onExportSessions={exportSessions} onImportSessions={importSessions} />}
+              {settingsOpen && <SettingsPanel timezone={timezone} setTimezone={setTimezone} themeId={themeId} setThemeId={setThemeId} uiPrefs={uiPrefs} setUiPrefs={setUiPrefs} aiConfig={aiConfig} setAiConfig={setAiConfig} llmStatus={llmStatus} llmTesting={llmTesting} onTestLlm={testLlm} onResetSettings={resetSettings} historyUsage={historyStoreUsage(historyStore)} onClearHistory={clearHistory} onExportSessions={exportSessions} onImportSessions={importSessions} />}
             </div>
           </div>
         </header>
