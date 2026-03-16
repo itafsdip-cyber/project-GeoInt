@@ -11,7 +11,8 @@ import type {
   OverlayTrackType,
 } from '../types/intelligence';
 
-const SESSION_KEY = 'geoint-session-v2';
+const SESSION_KEY = 'geoint-session-v3';
+const SESSION_VERSION = 3;
 
 export interface AIProviderSettings {
   providerType: 'none' | 'hosted-openai-compatible' | 'user-openai-compatible' | 'user-ollama-compatible';
@@ -88,14 +89,29 @@ const initialState: GeoIntState = {
 
 function sanitizePersisted(raw: any) {
   if (!raw || typeof raw !== 'object') return {};
+  if (Number(raw.sessionVersion) !== SESSION_VERSION) return {};
+
+  const overlayToggles = typeof raw.overlayToggles === 'object' && raw.overlayToggles
+    ? { ...initialState.overlayToggles, ...raw.overlayToggles }
+    : initialState.overlayToggles;
+
   return {
     selectedIncidentId: typeof raw.selectedIncidentId === 'string' ? raw.selectedIncidentId : undefined,
     pinnedIncidentIds: Array.isArray(raw.pinnedIncidentIds) ? raw.pinnedIncidentIds.filter((x: unknown) => typeof x === 'string') : [],
     briefingSelectionId: typeof raw.briefingSelectionId === 'string' ? raw.briefingSelectionId : undefined,
     selectedEntityId: typeof raw.selectedEntityId === 'string' ? raw.selectedEntityId : undefined,
     activeNarrativeIds: Array.isArray(raw.activeNarrativeIds) ? raw.activeNarrativeIds.filter((x: unknown) => typeof x === 'string') : [],
-    overlayToggles: typeof raw.overlayToggles === 'object' && raw.overlayToggles ? { ...initialState.overlayToggles, ...raw.overlayToggles } : initialState.overlayToggles,
-    aiProvider: typeof raw.aiProvider === 'object' && raw.aiProvider ? { ...initialState.aiProvider, ...raw.aiProvider } : initialState.aiProvider,
+    overlayToggles,
+    aiProvider: typeof raw.aiProvider === 'object' && raw.aiProvider
+      ? {
+        providerType: raw.aiProvider.providerType || initialState.aiProvider.providerType,
+        endpoint: raw.aiProvider.endpoint,
+        model: raw.aiProvider.model,
+        timeoutMs: Number(raw.aiProvider.timeoutMs || initialState.aiProvider.timeoutMs),
+        reachable: Boolean(raw.aiProvider.reachable),
+        statusMessage: raw.aiProvider.statusMessage,
+      }
+      : initialState.aiProvider,
     session: typeof raw.session === 'object' && raw.session ? { ...initialState.session, ...raw.session } : initialState.session,
   };
 }
@@ -103,6 +119,7 @@ function sanitizePersisted(raw: any) {
 function persistState(state: GeoIntState) {
   if (typeof window === 'undefined') return;
   const safe = {
+    sessionVersion: SESSION_VERSION,
     selectedIncidentId: state.selectedIncidentId,
     pinnedIncidentIds: state.pinnedIncidentIds,
     briefingSelectionId: state.briefingSelectionId,

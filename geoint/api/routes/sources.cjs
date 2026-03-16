@@ -17,19 +17,42 @@ function summarizeRuns(runs) {
       lastRunState: undefined,
       staleAgeMs: undefined,
       warningCount: 0,
+      errorsCount: 0,
+      durationMs: undefined,
+      itemsFetched: 0,
+      itemsNormalized: 0,
+      itemsDropped: 0,
+      degradedReason: undefined,
+      authRequired: false,
     };
+
     if (!existing.lastRunState || new Date(run.startedAt) > new Date(existing.lastStartedAt || 0)) {
       existing.lastRunState = run.state;
       existing.healthState = run.healthStateAfterRun || existing.healthState;
       existing.warningCount = run.warningsCount || 0;
+      existing.errorsCount = run.errorsCount || 0;
+      existing.durationMs = run.durationMs;
+      existing.itemsFetched = run.itemsFetched || 0;
+      existing.itemsNormalized = run.itemsNormalized || 0;
+      existing.itemsDropped = run.itemsDropped || 0;
       existing.lastStartedAt = run.startedAt;
-      if (run.errorMessages?.length) existing.lastError = run.errorMessages[0];
+      if (run.errorMessages?.length) {
+        existing.lastError = run.errorMessages[0];
+        existing.degradedReason = run.errorMessages[0];
+      }
+      const hasAuthError = (run.errorMessages || []).some((message) => String(message).toLowerCase().includes('auth'));
+      existing.authRequired = hasAuthError || existing.healthState === 'AUTH_MISSING';
       if (['SUCCESS', 'PARTIAL_SUCCESS'].includes(run.state)) existing.lastSuccess = run.finishedAt || run.startedAt;
       if (run.finishedAt) existing.staleAgeMs = Date.now() - Date.parse(run.finishedAt);
     }
     bySource.set(run.sourceId, existing);
   }
-  return [...bySource.values()].map(({ lastStartedAt, ...item }) => item);
+
+  return [...bySource.values()].map(({ lastStartedAt, ...item }) => {
+    if (item.healthState === 'UNAVAILABLE' && item.lastRunState === 'FAILED') item.healthState = 'FAILED';
+    if (item.staleAgeMs && item.staleAgeMs > 60 * 60 * 1000 && item.healthState === 'ACTIVE') item.healthState = 'STALE';
+    return item;
+  });
 }
 
 function connectorMetadata() {
@@ -51,7 +74,7 @@ function connectorMetadata() {
       configured: Boolean(process.env.ADSB_API_KEY),
       degraded: true,
       capabilities: ['AIR'],
-      requirementNotes: 'Configured for future expansion; no live endpoint configured in this phase.',
+      requirementNotes: 'Requires ADS-B API endpoint and credentials.',
     },
     {
       sourceId: 'ais',
@@ -60,7 +83,7 @@ function connectorMetadata() {
       configured: Boolean(process.env.AIS_API_KEY),
       degraded: true,
       capabilities: ['MARITIME'],
-      requirementNotes: 'Configured for future expansion; no live endpoint configured in this phase.',
+      requirementNotes: 'Requires AIS API endpoint and credentials.',
     },
   ];
 }

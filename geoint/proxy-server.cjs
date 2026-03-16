@@ -104,8 +104,8 @@ async function getNormalizedEventsPayload() {
   const trajectories = buildTrajectories(ordered).slice(0, 80);
 
   const overlays = await Promise.all([
-    connectorRunner.runConnector('ais', fetchAisOverlay, { apiKey: process.env.AIS_API_KEY }, 'overlay'),
-    connectorRunner.runConnector('adsb', fetchAdsbOverlay, { apiKey: process.env.ADSB_API_KEY }, 'overlay'),
+    connectorRunner.runConnector('ais', fetchAisOverlay, { apiKey: process.env.AIS_API_KEY, endpoint: process.env.AIS_ENDPOINT }, 'overlay'),
+    connectorRunner.runConnector('adsb', fetchAdsbOverlay, { apiKey: process.env.ADSB_API_KEY, endpoint: process.env.ADSB_ENDPOINT }, 'overlay'),
     connectorRunner.runConnector('firms', fetchFirmsOverlay, { apiKey: process.env.FIRMS_API_KEY }, 'overlay'),
   ]);
 
