@@ -13,7 +13,7 @@ import { createBriefing } from '../../services/intelligence/briefingService';
 import { buildPersistentEntityGraph } from '../../services/intelligence/entityGraphCore';
 import { detectNarrativeClusters } from '../../services/intelligence/narrativeCore';
 import { pruneStaleOverlayTracks } from '../../services/intelligence/overlayTrackService';
-import type { IntelligenceEvent, OverlayTrackType } from '../../types/intelligence';
+import type { IntelligenceEvent } from '../../types/intelligence';
 
 const API_BASE = (import.meta.env.VITE_GEOINT_API_BASE || '').trim();
 
@@ -22,13 +22,20 @@ const seedEvents: IntelligenceEvent[] = [{
 }];
 
 export default function IntelligenceWorkspace() {
-  const { state, actions } = useGeoIntStore({ events: seedEvents, briefings: [createBriefing()] });
   const [sourceRuns, setSourceRuns] = useState([]);
-  const [overlayEnabled, setOverlayEnabled] = useState<Record<OverlayTrackType, boolean>>({ MARITIME: true, AIR: false, FIRE: true, HOTSPOT: false, SATELLITE: false });
+  const state = useGeoIntStore((s) => s.state);
+  const actions = useGeoIntStore((s) => s.actions);
+
+  useEffect(() => {
+    actions.bootstrap({ events: seedEvents, briefings: [createBriefing()] });
+  }, [actions]);
 
   useEffect(() => {
     if (!API_BASE) return;
-    fetch(`${API_BASE}/sources/operations`).then((res) => res.json()).then((payload) => setSourceRuns(payload.runs || [])).catch(() => setSourceRuns([]));
+    fetch(`${API_BASE}/sources/operations`)
+      .then((res) => res.json())
+      .then((payload) => setSourceRuns(payload.runs || []))
+      .catch(() => setSourceRuns([]));
   }, []);
 
   const graph = useMemo(() => buildPersistentEntityGraph(state.events, state.incidents), [state.events, state.incidents]);
@@ -37,17 +44,19 @@ export default function IntelligenceWorkspace() {
 
   useEffect(() => {
     actions.replace({ entities: graph.entities, relations: graph.relations, narratives, overlayTracks: overlays });
-  }, [graph.entities, graph.relations, narratives, overlays]);
+    actions.setActiveNarratives(narratives.slice(0, 8).map((item) => item.narrativeId));
+  }, [graph.entities, graph.relations, narratives, overlays, actions]);
 
-  const activeNarratives = selectors.recentNarratives(state);
+  const activeNarratives = selectors.activeNarratives(state).length ? selectors.activeNarratives(state) : selectors.recentNarratives(state);
 
   return <WorkspaceLayout
-    map={<MapView events={state.events} overlays={state.overlayTracks.filter((track) => overlayEnabled[track.type])} />}
+    aiProvider={state.aiProvider}
+    map={<MapView events={state.events} overlays={state.overlayTracks.filter((track) => state.overlayToggles[track.type])} selectedEntity={selectors.selectedEntity(state)} />}
     right={<>
-      <OverlayControls enabled={overlayEnabled} onToggle={(key) => setOverlayEnabled((prev) => ({ ...prev, [key]: !prev[key] }))} />
+      <OverlayControls enabled={state.overlayToggles} onToggle={actions.toggleOverlay} />
       <SourceOperationsPanel runs={sourceRuns} />
       <AnalystNotebookPanel notes={state.notes} incidents={state.incidents} entities={state.entities} narratives={activeNarratives} onSaveNote={actions.upsertNote} />
-      <BriefingEditorPanel briefing={state.briefings[0]} />
+      {selectors.briefingSelection(state) && <BriefingEditorPanel briefing={selectors.briefingSelection(state)!} />}
       <EntityGraphPanel entities={state.entities} relations={state.relations} />
       <NarrativePanel narratives={activeNarratives} />
     </>}
