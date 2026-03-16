@@ -2,7 +2,7 @@ export type VerificationLevel = 'VERIFIED' | 'HEURISTIC' | 'INFERRED' | 'UNKNOWN
 export type GeoPrecision = 'EXACT' | 'APPROXIMATE' | 'REGION' | 'UNKNOWN';
 export type GeolocationPrecision = GeoPrecision;
 export type NarrativeStatus = 'EMERGING' | 'TRENDING' | 'STABLE' | 'DISPUTED' | 'DECLINING';
-export type SourceHealthState = 'ACTIVE' | 'AUTH_MISSING' | 'RATE_LIMITED' | 'STALE' | 'UNAVAILABLE';
+export type SourceHealthState = 'ACTIVE' | 'AUTH_MISSING' | 'RATE_LIMITED' | 'STALE' | 'UNAVAILABLE' | 'DEGRADED' | 'UNKNOWN';
 export type OverlayTrackType = 'MARITIME' | 'AIR' | 'FIRE' | 'HOTSPOT' | 'SATELLITE';
 
 export interface SourceReference {
@@ -68,20 +68,33 @@ export interface NarrativeSignal {
 
 export interface AnalystNote {
   noteId: string;
+  title: string;
+  body: string;
   createdAt: string;
+  updatedAt?: string;
   analyst: string;
-  text: string;
+  tags: string[];
   linkedIncidentIds: string[];
   linkedEntityIds: string[];
   linkedNarrativeIds: string[];
+  classification: string;
+  confidenceNote?: string;
 }
 
-export interface BriefingSection { id: string; heading: string; body: string; }
+export interface BriefingSection {
+  id: string;
+  type: string;
+  title: string;
+  content: string;
+  linkedIds: string[];
+}
+
 export interface BriefingDocument {
   briefingId: string;
   title: string;
   createdAt: string;
   updatedAt: string;
+  tags: string[];
   sections: BriefingSection[];
 }
 
@@ -107,6 +120,9 @@ export interface OverlayTrack {
   latitude: number;
   longitude: number;
   observedAt: string;
+  collectedAt?: string;
   expiresAt?: string;
   verificationLevel: VerificationLevel;
+  sourceReference?: SourceReference;
+  locationPrecision?: GeoPrecision;
 }

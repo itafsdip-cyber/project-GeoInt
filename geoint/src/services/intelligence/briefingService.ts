@@ -9,13 +9,14 @@ export function createBriefing(title = 'GeoInt Briefing'): BriefingDocument {
     title,
     createdAt: now,
     updatedAt: now,
-    sections: SECTION_ORDER.map((heading) => ({ id: `${heading.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`, heading, body: '' })),
+    tags: [],
+    sections: SECTION_ORDER.map((heading) => ({ id: `${heading.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`, type: 'TEXT', title: heading, content: '', linkedIds: [] })),
   };
 }
 
 export function exportBriefing(briefing: BriefingDocument, format: 'markdown' | 'json' | 'text' | 'html') {
   if (format === 'json') return JSON.stringify(briefing, null, 2);
-  if (format === 'text') return `${briefing.title}\n\n${briefing.sections.map((section) => `${section.heading}\n${section.body || 'N/A'}`).join('\n\n')}`;
-  if (format === 'html') return `<html><body><h1>${briefing.title}</h1>${briefing.sections.map((section) => `<h2>${section.heading}</h2><p>${section.body || 'N/A'}</p>`).join('')}</body></html>`;
-  return `# ${briefing.title}\n\n${briefing.sections.map((section) => `## ${section.heading}\n${section.body || 'N/A'}`).join('\n\n')}`;
+  if (format === 'text') return `${briefing.title}\n\n${briefing.sections.map((section) => `${section.title}\n${section.content || 'N/A'}`).join('\n\n')}`;
+  if (format === 'html') return `<html><body><h1>${briefing.title}</h1>${briefing.sections.map((section) => `<h2>${section.title}</h2><p>${section.content || 'N/A'}</p>`).join('')}</body></html>`;
+  return `# ${briefing.title}\n\n${briefing.sections.map((section) => `## ${section.title}\n${section.content || 'N/A'}`).join('\n\n')}`;
 }

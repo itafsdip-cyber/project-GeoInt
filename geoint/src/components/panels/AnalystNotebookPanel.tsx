@@ -5,23 +5,41 @@ interface Props {
   incidents: Incident[];
   entities: EntityNode[];
   narratives: NarrativeCluster[];
-  onSaveNote: (note: AnalystNote) => void;
+  onCreateNote: (note: Partial<AnalystNote>) => void;
+  onDeleteNote: (noteId: string) => void;
 }
 
-export default function AnalystNotebookPanel({ notes, incidents, entities, narratives, onSaveNote }: Props) {
+export default function AnalystNotebookPanel({ notes, incidents, entities, narratives, onCreateNote, onDeleteNote }: Props) {
   const saveDraft = () => {
-    const text = window.prompt('Analyst note')?.trim();
-    if (!text) return;
-    onSaveNote({
-      noteId: `note-${Date.now()}`,
-      createdAt: new Date().toISOString(),
+    const title = window.prompt('Note title')?.trim();
+    if (!title) return;
+    const body = window.prompt('Analyst note body')?.trim() || '';
+    onCreateNote({
+      title,
+      body,
       analyst: 'Analyst',
-      text,
+      tags: [],
       linkedIncidentIds: incidents.slice(0, 1).map((item) => item.incidentId),
       linkedEntityIds: entities.slice(0, 2).map((item) => item.entityId),
       linkedNarrativeIds: narratives.slice(0, 1).map((item) => item.narrativeId),
+      classification: 'UNCLASSIFIED',
+      confidenceNote: '',
     });
   };
 
-  return <section><div style={{ fontSize: 11, color: '#00e5c8' }}>ANALYST NOTEBOOK</div><button onClick={saveDraft}>Add note</button><div>{notes.slice(0, 6).map((note) => <div key={note.noteId} style={{ fontSize: 11 }}>{note.text}</div>)}</div></section>;
+  return (
+    <section>
+      <div style={{ fontSize: 11, color: '#00e5c8' }}>ANALYST NOTEBOOK</div>
+      <button onClick={saveDraft}>Add note</button>
+      <div>
+        {notes.slice(0, 6).map((note) => (
+          <div key={note.noteId} style={{ fontSize: 11, borderBottom: '1px solid #233', marginBottom: 6 }}>
+            <strong>{note.title}</strong>
+            <div>{note.body || 'No content.'}</div>
+            <button onClick={() => onDeleteNote(note.noteId)}>Delete</button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
