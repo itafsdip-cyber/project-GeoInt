@@ -1,14 +1,38 @@
 function registerWatchlistRoutes({ addRoute, storage }) {
+  const parseJsonBody = async (req, res) => {
+    try {
+      const body = await req.json();
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        res.json({ error: 'Invalid JSON body' }, 400);
+        return null;
+      }
+      return body;
+    } catch {
+      res.json({ error: 'Invalid JSON body' }, 400);
+      return null;
+    }
+  };
+
   addRoute('GET', '/watchlists', async (_req, res) => {
     res.json({ watchlists: storage.getWatchlists?.() || [], alerts: storage.getWatchlistAlerts?.() || [] });
   });
 
   addRoute('POST', '/watchlists', async (req, res) => {
-    const body = await req.json();
+    const body = await parseJsonBody(req, res);
+    if (!body) return;
     const now = new Date().toISOString();
+    if (typeof body.title !== 'string' || !body.title.trim()) {
+      return res.json({ error: 'Watchlist title is required' }, 400);
+    }
+
+    const watchlists = storage.getWatchlists?.() || [];
+    if (watchlists.some((item) => item.title.toLowerCase() === body.title.trim().toLowerCase())) {
+      return res.json({ error: 'Watchlist title already exists' }, 409);
+    }
+
     const watchlist = {
       id: body.id || `watch-${Date.now()}`,
-      title: body.title || 'Untitled watchlist',
+      title: body.title.trim(),
       type: body.type || 'KEYWORD',
       criteria: body.criteria || '',
       createdAt: body.createdAt || now,
@@ -18,17 +42,27 @@ function registerWatchlistRoutes({ addRoute, storage }) {
       analystOwner: body.analystOwner || 'Analyst',
       tags: Array.isArray(body.tags) ? body.tags : [],
     };
-    const saved = [...(storage.getWatchlists?.() || []), watchlist];
+    const saved = [...watchlists, watchlist];
     storage.saveWatchlists?.(saved);
     res.json({ watchlist }, 201);
   });
 
   addRoute('PATCH', '/watchlists/:id', async (req, res) => {
-    const body = await req.json();
+    const body = await parseJsonBody(req, res);
+    if (!body) return;
     const current = storage.getWatchlists?.() || [];
     const existing = current.find((item) => item.id === req.params.id);
     if (!existing) return res.json({ error: 'Watchlist not found' }, 404);
-    const updated = { ...existing, ...body, id: req.params.id, updatedAt: new Date().toISOString() };
+    if (body.title !== undefined && (typeof body.title !== 'string' || !body.title.trim())) {
+      return res.json({ error: 'Watchlist title must be a non-empty string' }, 400);
+    }
+    const updated = {
+      ...existing,
+      ...body,
+      title: typeof body.title === 'string' ? body.title.trim() : existing.title,
+      id: req.params.id,
+      updatedAt: new Date().toISOString(),
+    };
     storage.saveWatchlists?.([...current.filter((item) => item.id !== req.params.id), updated]);
     return res.json({ watchlist: updated });
   });
@@ -38,7 +72,17 @@ function registerWatchlistRoutes({ addRoute, storage }) {
   });
 
   addRoute('POST', '/watchlists/alerts', async (req, res) => {
-    const body = await req.json();
+    const body = await parseJsonBody(req, res);
+    if (!body) return;
+    if (typeof body.watchlistId !== 'string' || !body.watchlistId) {
+      return res.json({ error: 'watchlistId is required' }, 400);
+    }
+    if (typeof body.matchedObjectType !== 'string' || !body.matchedObjectType) {
+      return res.json({ error: 'matchedObjectType is required' }, 400);
+    }
+    if (typeof body.matchedObjectId !== 'string' || !body.matchedObjectId) {
+      return res.json({ error: 'matchedObjectId is required' }, 400);
+    }
     const alert = {
       id: body.id || `alert-${Date.now()}`,
       watchlistId: body.watchlistId,

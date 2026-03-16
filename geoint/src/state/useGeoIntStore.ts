@@ -96,6 +96,8 @@ export interface GeoIntStore {
 
 const now = () => new Date().toISOString();
 
+const isNonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
+
 const initialState: GeoIntState = {
   events: [],
   incidents: [],
@@ -199,8 +201,50 @@ function loadPersisted() {
 let currentState: GeoIntState = { ...initialState, ...loadPersisted() };
 const listeners = new Set<() => void>();
 
+function reconcileStateReferences(state: GeoIntState): GeoIntState {
+  const incidentIds = new Set(state.incidents.map((incident) => incident.incidentId));
+  const entityIds = new Set(state.entities.map((entity) => entity.entityId));
+  const narrativeIds = new Set(state.narratives.map((narrative) => narrative.narrativeId));
+  const investigationIds = new Set(state.investigations.map((investigation) => investigation.id));
+
+  const selectedIncidentId = state.selectedIncidentId && incidentIds.has(state.selectedIncidentId)
+    ? state.selectedIncidentId
+    : undefined;
+  const selectedEntityId = state.selectedEntityId && entityIds.has(state.selectedEntityId)
+    ? state.selectedEntityId
+    : undefined;
+  const selectedInvestigationId = state.selectedInvestigationId && investigationIds.has(state.selectedInvestigationId)
+    ? state.selectedInvestigationId
+    : undefined;
+
+  const pinnedIncidentIds = state.pinnedIncidentIds.filter((id) => incidentIds.has(id));
+  const activeNarrativeIds = state.activeNarrativeIds.filter((id) => narrativeIds.has(id));
+  const mapHighlightIds = state.mapHighlightIds.filter(isNonEmptyString);
+
+  if (
+    selectedIncidentId === state.selectedIncidentId
+    && selectedEntityId === state.selectedEntityId
+    && selectedInvestigationId === state.selectedInvestigationId
+    && pinnedIncidentIds.length === state.pinnedIncidentIds.length
+    && activeNarrativeIds.length === state.activeNarrativeIds.length
+    && mapHighlightIds.length === state.mapHighlightIds.length
+  ) {
+    return state;
+  }
+
+  return {
+    ...state,
+    selectedIncidentId,
+    selectedEntityId,
+    selectedInvestigationId,
+    pinnedIncidentIds,
+    activeNarrativeIds,
+    mapHighlightIds,
+  };
+}
+
 const setState = (updater: (state: GeoIntState) => GeoIntState) => {
-  currentState = updater(currentState);
+  currentState = reconcileStateReferences(updater(currentState));
   persistState(currentState);
   listeners.forEach((listener) => listener());
 };

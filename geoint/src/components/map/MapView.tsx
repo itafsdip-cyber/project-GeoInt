@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import type { Entity, IntelligenceEvent, MonitoredRegion, OverlayTrack } from '../../types/intelligence';
 import type { TimelineItem } from '../../services/intelligence/timelineService';
 import { incidentLayer } from './layers/incidentLayer';
@@ -26,14 +27,27 @@ export default function MapView({
   watchAreas?: MonitoredRegion[];
   heatRegion?: MonitoredRegion;
 }) {
-  const incidents = incidentLayer(events);
-  const trajectories = trajectoryLayer(events);
-  const tracks = overlayTrackLayer(overlays);
-  const uncertain = uncertaintyLayer(events);
-  const focused = entityFocusLayer(events, selectedEntity);
-  const timelineHighlights = timelineHighlightLayer(timelineSelection, events, overlays);
-  const watchAreasView = watchAreaLayer(watchAreas);
-  const heatSignals = heatSignalLayer({ events, overlays, region: heatRegion });
+  const incidents = useMemo(() => incidentLayer(events), [events]);
+  const trajectories = useMemo(() => trajectoryLayer(events), [events]);
+  const tracks = useMemo(() => overlayTrackLayer(overlays), [overlays]);
+  const uncertain = useMemo(() => uncertaintyLayer(events), [events]);
+  const focused = useMemo(() => entityFocusLayer(events, selectedEntity), [events, selectedEntity]);
+  const timelineHighlights = useMemo(
+    () => timelineHighlightLayer(timelineSelection, events, overlays),
+    [timelineSelection, events, overlays],
+  );
+  const watchAreasView = useMemo(() => watchAreaLayer(watchAreas), [watchAreas]);
+  const heatSignals = useMemo(() => heatSignalLayer({ events, overlays, region: heatRegion }), [events, overlays, heatRegion]);
 
-  return <section style={{ border: '1px solid #1b232f', padding: 8 }}><div style={{ color: '#00e5c8', fontSize: 11 }}>TACTICAL MAP</div><div style={{ fontSize: 11 }}>Incidents {incidents.length} · Trajectories {trajectories.length} · Overlay Tracks {tracks.length} · Uncertainty {uncertain.length} · Entity Focus {focused.length} · Timeline Highlights {timelineHighlights.length} · Watch Areas {watchAreasView.length} · Heat Signals {heatSignals.length} · Analysis Highlights {highlightedRecordIds.length}</div><div style={{ marginTop: 4, fontSize: 9, color: '#8fa2b6' }}>Highlights are visualization only; incidents and overlays remain separate intelligence layers. Heat monitoring is not causality.</div></section>;
+  return (
+    <section style={{ border: '1px solid #1b232f', padding: 8 }}>
+      <div style={{ color: '#00e5c8', fontSize: 11 }}>TACTICAL MAP</div>
+      <div style={{ fontSize: 11 }}>
+        Incidents {incidents.length} · Trajectories {trajectories.length} · Overlay Tracks {tracks.length} · Uncertainty {uncertain.length} · Entity Focus {focused.length} · Timeline Highlights {timelineHighlights.length} · Watch Areas {watchAreasView.length} · Heat Signals {heatSignals.length} · Analysis Highlights {highlightedRecordIds.length}
+      </div>
+      <div style={{ marginTop: 4, fontSize: 9, color: '#8fa2b6' }}>
+        Highlights are visualization only; incidents and overlays remain separate intelligence layers. Heat monitoring is not causality.
+      </div>
+    </section>
+  );
 }
