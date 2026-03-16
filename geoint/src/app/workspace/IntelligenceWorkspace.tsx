@@ -7,16 +7,24 @@ import AnalystNotebookPanel from '../../components/panels/AnalystNotebookPanel';
 import BriefingEditorPanel from '../../components/panels/BriefingEditorPanel';
 import EntityGraphPanel from '../../components/panels/EntityGraphPanel';
 import NarrativePanel from '../../components/panels/NarrativePanel';
+import TimelinePanel from '../../components/panels/TimelinePanel';
 import { useGeoIntStore } from '../../state/useGeoIntStore';
 import { selectors } from '../../state/selectors';
 import { createBriefing } from '../../services/intelligence/briefingService';
 import { buildPersistentEntityGraph } from '../../services/intelligence/entityGraphCore';
 import { detectNarrativeClusters } from '../../services/intelligence/narrativeCore';
 import { normalizeOverlayTracks, pruneStaleOverlayTracks } from '../../services/intelligence/overlayTrackService';
+import {
+  buildIncidentTimeline,
+  buildNarrativeTimeline,
+  buildOverlayTimeline,
+  buildSourceActivityTimeline,
+  sortTimeline,
+} from '../../services/intelligence/timelineService';
 import { notesApi } from '../../services/api/notesApi';
 import { briefingsApi } from '../../services/api/briefingsApi';
 import { sourcesApi } from '../../services/api/sourcesApi';
-import type { IntelligenceEvent } from '../../types/intelligence';
+import type { AnalystNote, IntelligenceEvent } from '../../types/intelligence';
 
 const API_BASE = (import.meta.env.VITE_GEOINT_API_BASE || '').trim();
 
@@ -24,9 +32,20 @@ const seedEvents: IntelligenceEvent[] = [{
   id: 'seed-1', title: 'Regional maritime disruption reported', timestamp: new Date().toISOString(), latitude: 25.2, longitude: 55.3, region: 'Gulf', verificationLevel: 'HEURISTIC', geolocationPrecision: 'APPROXIMATE', uncertaintyRadiusKm: 35, references: [{ sourceId: 'rss', sourceName: 'RSS', collectedAt: new Date().toISOString(), health: 'ACTIVE' }],
 }];
 
+function promoteNoteToSection(note: AnalystNote) {
+  return {
+    id: `promoted-${note.noteId}`,
+    type: 'ANALYST_NOTE',
+    title: note.title,
+    content: note.body,
+    linkedIds: [note.noteId, ...note.linkedIncidentIds, ...note.linkedEntityIds, ...note.linkedNarrativeIds],
+  };
+}
+
 export default function IntelligenceWorkspace() {
   const [sourceStatus, setSourceStatus] = useState([]);
   const [connectorMeta, setConnectorMeta] = useState([]);
+  const [sourceRuns, setSourceRuns] = useState([]);
   const state = useGeoIntStore((s) => s.state);
   const actions = useGeoIntStore((s) => s.actions);
 
@@ -37,7 +56,10 @@ export default function IntelligenceWorkspace() {
   useEffect(() => {
     notesApi.list().then((notes) => actions.replace({ notes })).catch(() => {});
     briefingsApi.list().then((briefings) => {
-      if (briefings.length) actions.replace({ briefings });
+      if (briefings.length) {
+        actions.replace({ briefings });
+        if (!state.briefingSelectionId) actions.selectBriefing(briefings[0].briefingId);
+      }
     }).catch(() => {});
   }, [actions]);
 
@@ -52,6 +74,7 @@ export default function IntelligenceWorkspace() {
 
     sourcesApi.status().then((payload) => setSourceStatus(payload.sources || [])).catch(() => setSourceStatus([]));
     sourcesApi.connectors().then((payload) => setConnectorMeta(payload.connectors || [])).catch(() => setConnectorMeta([]));
+    sourcesApi.runs('?limit=120').then((payload) => setSourceRuns(payload.runs || [])).catch(() => setSourceRuns([]));
   }, [actions]);
 
   const graph = useMemo(() => buildPersistentEntityGraph(state.events, state.incidents), [state.events, state.incidents]);
@@ -64,13 +87,30 @@ export default function IntelligenceWorkspace() {
   }, [graph.entities, graph.relations, narratives, overlays, actions]);
 
   const activeNarratives = selectors.activeNarratives(state).length ? selectors.activeNarratives(state) : selectors.recentNarratives(state);
+  const timelineItems = useMemo(
+    () => sortTimeline([
+      ...buildIncidentTimeline(state.events, state.incidents),
+      ...buildNarrativeTimeline(activeNarratives),
+      ...buildOverlayTimeline(overlays),
+      ...buildSourceActivityTimeline(state.notes, state.briefings),
+    ]),
+    [activeNarratives, overlays, state.briefings, state.events, state.incidents, state.notes],
+  );
+
+  const sourceOpsSummary = useMemo(() => ({
+    active: sourceStatus.filter((item: any) => item.healthState === 'ACTIVE').length,
+    degraded: sourceStatus.filter((item: any) => ['DEGRADED', 'STALE', 'AUTH_MISSING'].includes(item.healthState)).length,
+    failed: sourceStatus.filter((item: any) => ['FAILED', 'UNAVAILABLE'].includes(item.healthState)).length,
+  }), [sourceStatus]);
 
   return <WorkspaceLayout
     aiProvider={state.aiProvider}
-    map={<MapView events={state.events} overlays={state.overlayTracks.filter((track) => state.overlayToggles[track.type])} selectedEntity={selectors.selectedEntity(state)} />}
+    sourceOps={sourceOpsSummary}
+    map={<MapView events={state.events} overlays={state.overlayTracks.filter((track) => state.overlayToggles[track.type])} selectedEntity={selectors.selectedEntity(state)} timelineSelection={timelineItems.slice(0, 12)} />}
     right={<>
       <OverlayControls enabled={state.overlayToggles} onToggle={actions.toggleOverlay} />
-      <SourceOperationsPanel status={sourceStatus} connectors={connectorMeta} />
+      <SourceOperationsPanel status={sourceStatus} connectors={connectorMeta} runs={sourceRuns} />
+      <TimelinePanel items={timelineItems} />
       <AnalystNotebookPanel
         notes={state.notes}
         incidents={state.incidents}
@@ -88,6 +128,16 @@ export default function IntelligenceWorkspace() {
             actions.removeNote(noteId);
           } catch {}
         }}
+        onPromoteNote={async (note) => {
+          const selected = selectors.briefingSelection(state) || state.briefings[0];
+          if (!selected) return;
+          const updated = { ...selected, sections: [...selected.sections, promoteNoteToSection(note)], updatedAt: new Date().toISOString() };
+          try {
+            const saved = await briefingsApi.update(updated.briefingId, updated);
+            actions.upsertBriefing(saved);
+            actions.selectBriefing(saved.briefingId);
+          } catch {}
+        }}
       />
       {selectors.briefingSelection(state) && (
         <BriefingEditorPanel
@@ -96,6 +146,7 @@ export default function IntelligenceWorkspace() {
             try {
               const saved = await briefingsApi.update(briefing.briefingId, briefing);
               actions.upsertBriefing(saved);
+              actions.selectBriefing(saved.briefingId);
             } catch {}
           }}
           onDelete={async (briefingId) => {

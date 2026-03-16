@@ -7,9 +7,10 @@ interface Props {
   narratives: NarrativeCluster[];
   onCreateNote: (note: Partial<AnalystNote>) => void;
   onDeleteNote: (noteId: string) => void;
+  onPromoteNote: (note: AnalystNote) => void;
 }
 
-export default function AnalystNotebookPanel({ notes, incidents, entities, narratives, onCreateNote, onDeleteNote }: Props) {
+export default function AnalystNotebookPanel({ notes, incidents, entities, narratives, onCreateNote, onDeleteNote, onPromoteNote }: Props) {
   const saveDraft = () => {
     const title = window.prompt('Note title')?.trim();
     if (!title) return;
@@ -36,6 +37,7 @@ export default function AnalystNotebookPanel({ notes, incidents, entities, narra
           <div key={note.noteId} style={{ fontSize: 11, borderBottom: '1px solid #233', marginBottom: 6 }}>
             <strong>{note.title}</strong>
             <div>{note.body || 'No content.'}</div>
+            <button onClick={() => onPromoteNote(note)}>Promote to Briefing</button>
             <button onClick={() => onDeleteNote(note.noteId)}>Delete</button>
           </div>
         ))}

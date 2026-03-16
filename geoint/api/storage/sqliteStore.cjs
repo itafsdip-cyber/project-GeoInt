@@ -4,16 +4,42 @@ const { applyRunRetention } = require('./retention.cjs');
 
 function createSqliteStore() {
   const dbPath = process.env.GEOINT_SQLITE_PATH || path.join(__dirname, '..', '.geoint-storage.sqlite');
+  console.log(`[storage] adapter=sqlite dbPath=${dbPath}`);
   let Database = null;
   try {
     Database = require('better-sqlite3');
   } catch {
+    console.warn('[storage] SQLite unavailable (better-sqlite3 missing). Falling back to in-memory adapter.');
     return null;
   }
 
-  const db = new Database(dbPath);
   const schemaPath = path.join(__dirname, 'schema.sql');
-  db.exec(fs.readFileSync(schemaPath, 'utf8'));
+  const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+  const db = new Database(dbPath);
+
+  const requiredTables = ['events', 'incidents', 'entities', 'narratives', 'analyst_notes', 'briefings', 'briefing_sections', 'overlay_tracks', 'ingestion_runs'];
+  const requiredIndexes = ['idx_events_observed_at', 'idx_ingestion_runs_source_id', 'idx_overlay_tracks_type'];
+
+  function validateSchema() {
+    const tableRows = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();
+    const existingTables = new Set(tableRows.map((row) => row.name));
+    const missingTables = requiredTables.filter((name) => !existingTables.has(name));
+    if (missingTables.length > 0) {
+      db.exec(schemaSql);
+    }
+
+    const indexRows = db.prepare("SELECT name FROM sqlite_master WHERE type='index'").all();
+    const existingIndexes = new Set(indexRows.map((row) => row.name));
+    const missingIndexes = requiredIndexes.filter((name) => !existingIndexes.has(name));
+    if (missingIndexes.length > 0) {
+      db.exec(schemaSql);
+    }
+
+    const schemaVersion = db.pragma('user_version', { simple: true });
+    console.log(`[storage] schemaVersion=${schemaVersion} missingTables=${missingTables.length}`);
+  }
+
+  validateSchema();
 
   function upsertSimple(table, idField, idColumn, payload) {
     const stmt = db.prepare(`INSERT INTO ${table} (${idColumn}, payload, updated_at) VALUES (@id, @payload, @updatedAt)
