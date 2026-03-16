@@ -1630,7 +1630,7 @@ function DraggablePanel({children,title,onClose,boundsRef,initialPosition,zIndex
 }
 
 /* ─── ROOT ─────────────────────────────────────────────────────── */
-export default function GEOINTv10(){
+function GEOINTv10(){
   const persistedBootstrap = useMemo(() => loadPersistedState() || {}, []);
   const [selected,setSelected]=useState(null);
   const [searchOpen,setSearch]=useState(false);
@@ -1888,6 +1888,7 @@ export default function GEOINTv10(){
       </div>
     </>
   );
+}
   
 import IntelligenceWorkspace from './app/workspace/IntelligenceWorkspace';
 
