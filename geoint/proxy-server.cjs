@@ -1,5 +1,6 @@
 const http = require('http');
 const https = require('https');
+const { URL } = require('url');
 
 try { require('dotenv').config(); } catch {}
 
@@ -16,6 +17,8 @@ const { createStorage } = require('./api/storage/index.cjs');
 const { registerHistoryRoutes } = require('./api/routes/history.cjs');
 const { registerProviderRoutes } = require('./api/routes/providers.cjs');
 const { registerSourceRoutes } = require('./api/routes/sources.cjs');
+const { registerNotesRoutes } = require('./api/routes/notes.cjs');
+const { registerBriefingsRoutes } = require('./api/routes/briefings.cjs');
 const { createConnectorRunner } = require('./api/connectors/connectorRunner.cjs');
 const { fetchAisOverlay } = require('./api/connectors/ais.cjs');
 const { fetchAdsbOverlay } = require('./api/connectors/adsb.cjs');
@@ -29,23 +32,27 @@ const registry = sourceRegistryFromEnv();
 const sourceManager = createSourceManager(registry);
 const storage = createStorage();
 const connectorRunner = createConnectorRunner({ storage });
-const routes = new Map();
+const routes = [];
 
-function addRoute(method, path, handler) { routes.set(`${method} ${path}`, handler); }
+function addRoute(method, path, handler) {
+  const parts = path.split('/').filter(Boolean);
+  routes.push({ method, path, parts, handler });
+}
 
 function setCors(req, res) {
   const origin = req.headers.origin;
   const allowOrigin = allowedOrigins.includes('*') ? '*' : (allowedOrigins.includes(origin) ? origin : allowedOrigins[0] || '*');
   res.setHeader('Access-Control-Allow-Origin', allowOrigin);
-  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version');
 }
 
-function makeReqRes(req, res) {
+function makeReqRes(req) {
   return {
     method: req.method,
     url: req.url,
     headers: req.headers,
+    params: {},
     async json() {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
@@ -60,29 +67,61 @@ function json(res, payload, status = 200) {
   res.end(JSON.stringify(payload));
 }
 
+function matchRoute(method, reqUrl) {
+  const pathname = new URL(reqUrl, 'http://localhost').pathname;
+  const reqParts = pathname.split('/').filter(Boolean);
+  for (const route of routes) {
+    if (route.method !== method || route.parts.length !== reqParts.length) continue;
+    const params = {};
+    let matched = true;
+    for (let i = 0; i < route.parts.length; i += 1) {
+      const routePart = route.parts[i];
+      const reqPart = reqParts[i];
+      if (routePart.startsWith(':')) params[routePart.slice(1)] = reqPart;
+      else if (routePart !== reqPart) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) return { route, params };
+  }
+  return null;
+}
+
 async function getNormalizedEventsPayload() {
   const providers = [
-    ['gdelt', fetchGdeltEvents, registry.gdelt],
-    ['rss', fetchRssEvents, registry.rss],
-    ['acled', fetchAcledEvents, registry.acled],
-    ['reddit', fetchRedditEvents, registry.reddit],
-    ['x', fetchXEvents, registry.x],
+    ['gdelt', fetchGdeltEvents, registry.gdelt, 'event'],
+    ['rss', fetchRssEvents, registry.rss, 'event'],
+    ['acled', fetchAcledEvents, registry.acled, 'event'],
+    ['reddit', fetchRedditEvents, registry.reddit, 'event'],
+    ['x', fetchXEvents, registry.x, 'event'],
   ];
 
-  const results = await Promise.all(providers.map(([id, fetcher, config]) => connectorRunner.runConnector(id, fetcher, config)));
+  const results = await Promise.all(providers.map(([id, fetcher, config, sourceType]) => connectorRunner.runConnector(id, fetcher, config, sourceType)));
   const events = results.flatMap((result) => result.events || []);
   const sourceStatuses = sourceManager.snapshot();
   const ordered = [...events].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   const trajectories = buildTrajectories(ordered).slice(0, 80);
 
   const overlays = await Promise.all([
-    connectorRunner.runConnector('ais', fetchAisOverlay, { apiKey: process.env.AIS_API_KEY }),
-    connectorRunner.runConnector('adsb', fetchAdsbOverlay, { apiKey: process.env.ADSB_API_KEY }),
-    connectorRunner.runConnector('firms', fetchFirmsOverlay, { apiKey: process.env.FIRMS_API_KEY }),
+    connectorRunner.runConnector('ais', fetchAisOverlay, { apiKey: process.env.AIS_API_KEY }, 'overlay'),
+    connectorRunner.runConnector('adsb', fetchAdsbOverlay, { apiKey: process.env.ADSB_API_KEY }, 'overlay'),
+    connectorRunner.runConnector('firms', fetchFirmsOverlay, { apiKey: process.env.FIRMS_API_KEY }, 'overlay'),
   ]);
 
+  const normalizedOverlays = overlays.flatMap((result) => result.events || []);
+  storage.saveEvents(ordered);
+  storage.saveOverlayTracks(normalizedOverlays);
   persistenceStore.appendSnapshot({ events: ordered, incidents: [], trajectories });
-  return { events: ordered, timeline: ordered.slice(0, 120), alerts: ordered.filter((event) => ['high', 'critical'].includes(String(event.severity || '').toLowerCase())).slice(0, 40), sourceStatuses, overlays: overlays.flatMap((result) => result.events || []), generatedAt: new Date().toISOString() };
+
+  return {
+    events: ordered,
+    timeline: ordered.slice(0, 120),
+    alerts: ordered.filter((event) => ['high', 'critical'].includes(String(event.severity || '').toLowerCase())).slice(0, 40),
+    sourceStatuses,
+    overlays: normalizedOverlays,
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 addRoute('GET', '/events/normalized', async (_req, res) => json(res, await getNormalizedEventsPayload()));
@@ -98,17 +137,20 @@ addRoute('POST', '/v1/messages', async (req, res) => {
 registerHistoryRoutes({ addRoute, persistenceStore });
 registerProviderRoutes({ addRoute });
 registerSourceRoutes({ addRoute, storage });
+registerNotesRoutes({ addRoute, storage });
+registerBriefingsRoutes({ addRoute, storage });
 
 const server = http.createServer(async (rawReq, rawRes) => {
   setCors(rawReq, rawRes);
   if (rawReq.method === 'OPTIONS') { rawRes.writeHead(200); rawRes.end(); return; }
 
-  const handler = routes.get(`${rawReq.method} ${rawReq.url}`);
-  if (!handler) return json(rawRes, { error: 'Not found' }, 404);
+  const matched = matchRoute(rawReq.method, rawReq.url);
+  if (!matched) return json(rawRes, { error: 'Not found' }, 404);
 
   try {
-    const req = makeReqRes(rawReq, rawRes);
-    await handler(req, { json: (payload, status = 200) => json(rawRes, payload, status) });
+    const req = makeReqRes(rawReq);
+    req.params = matched.params;
+    await matched.route.handler(req, { json: (payload, status = 200) => json(rawRes, payload, status) });
   } catch (error) {
     json(rawRes, { error: error.message }, 500);
   }
