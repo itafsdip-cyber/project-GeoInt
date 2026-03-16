@@ -235,6 +235,10 @@ export interface SearchResult {
   confidenceHint: string;
   caveatHint?: string;
   linkedIds?: string[];
+  score?: number;
+  matchExcerpt?: string;
+  sourceRefs?: string[];
+  region?: string;
 }
 
 export type WatchlistType = 'ENTITY' | 'KEYWORD' | 'NARRATIVE' | 'SOURCE' | 'REGION' | 'OVERLAY_TYPE';

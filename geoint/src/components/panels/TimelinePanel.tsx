@@ -5,6 +5,10 @@ type TimelineViewMode = 'chronological' | 'feed' | 'day';
 
 interface Props {
   items: TimelineItem[];
+  onCenterMap?: (item: TimelineItem) => void;
+  onCreateNote?: (item: TimelineItem) => void;
+  onAddToBriefing?: (item: TimelineItem) => void;
+  onFilterContext?: (item: TimelineItem) => void;
 }
 
 const modeLabel: Record<TimelineViewMode, string> = {
@@ -13,7 +17,7 @@ const modeLabel: Record<TimelineViewMode, string> = {
   day: 'By Day',
 };
 
-export default function TimelinePanel({ items }: Props) {
+export default function TimelinePanel({ items, onCenterMap, onCreateNote, onAddToBriefing, onFilterContext }: Props) {
   const [mode, setMode] = useState<TimelineViewMode>('chronological');
   const [incidentId, setIncidentId] = useState('');
   const [narrativeId, setNarrativeId] = useState('');
@@ -66,6 +70,12 @@ export default function TimelinePanel({ items }: Props) {
               <div>{new Date(item.timestamp).toLocaleString()} · {item.type} · {item.category}</div>
               <div>{item.summary}</div>
               <div style={{ color: '#9cb2c7' }}>{item.source} · {item.confidence}</div>
+              <div>
+                <button onClick={() => onCenterMap?.(item)}>center map</button>
+                <button onClick={() => onCreateNote?.(item)}>to note</button>
+                <button onClick={() => onAddToBriefing?.(item)}>to briefing</button>
+                <button onClick={() => onFilterContext?.(item)}>filter context</button>
+              </div>
             </div>
           ))}
         </div>
