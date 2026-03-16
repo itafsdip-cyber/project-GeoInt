@@ -11,6 +11,13 @@ import { generateIncidentSummary } from "./services/intelligence/incidentSummary
 import { computeTrendAnalytics, TREND_WINDOWS } from "./services/intelligence/trendAnalyticsService";
 import { testLocalLlmConnection } from "./services/intelligence/localLlmService";
 import { fetchBackendHistory, pushBackendHistorySnapshot } from "./services/intelligence/backendHistoryService";
+import { buildEntityGraph } from "./services/intelligence/entityGraphService";
+import { extractNarratives } from "./services/intelligence/narrativeService";
+import OverlayControls from "./components/OverlayControls";
+import PinnedIncidentPanel from "./components/IncidentPanel";
+import BriefingPanel from "./components/BriefingPanel";
+import EntityGraphPanel from "./components/EntityGraphPanel";
+import NarrativePanel from "./components/NarrativePanel";
 
 /* ═══════════════════════════════════════════════════════════════════
    GEOINT v10 — pixel-perfect UI match to reference screenshot
@@ -71,6 +78,8 @@ const DEFAULT_AI_CONFIG = {
     temperature: 0.2,
   },
 };
+
+const DEFAULT_OVERLAYS = { vessels: false, aircraft: false, fires: false, satelliteHotspots: false };
 
 const DEFAULT_WATCH_TERMS = [
   { type: "region", term: "Abu Dhabi" },
@@ -222,6 +231,23 @@ const LIVE_CHAT_MSGS = [
   {user:"GulfAnalyst",  role:"analyst",msg:"IRGC strategy is clear now — bleed the Gulf states economically while keeping the US tied down in defensive posture."},
   {user:"MaritimeWatch",role:"analyst",msg:"UKMTO just issued 3rd warning this hour. Commercial insurers are pulling out. This is becoming uninsurable maritime space."},
 ];
+
+const SAMPLE_OVERLAYS = {
+  vessels: [
+    { id: "vessel-1", title: "AIS Tanker route", source: "AIS sample", timestamp: new Date().toISOString(), latitude: 25.3, longitude: 56.8, severity: "low", verificationStatus: "pending", region: "Hormuz", geolocationPrecision: "approximate", metadata: { overlay: "vessel", vesselType: "Tanker", heading: 112 } },
+    { id: "vessel-2", title: "Cargo vessel choke-point", source: "AIS sample", timestamp: new Date().toISOString(), latitude: 26.0, longitude: 55.1, severity: "medium", verificationStatus: "pending", region: "Gulf", geolocationPrecision: "approximate", metadata: { overlay: "vessel", vesselType: "Cargo", heading: 94 } },
+  ],
+  aircraft: [
+    { id: "air-1", title: "ADS-B civilian route", source: "OpenSky sample", timestamp: new Date().toISOString(), latitude: 24.9, longitude: 54.4, severity: "low", verificationStatus: "pending", region: "UAE", geolocationPrecision: "approximate", metadata: { overlay: "aircraft", altitude: 32000, heading: 201 } },
+    { id: "air-2", title: "ADS-B holding pattern", source: "OpenSky sample", timestamp: new Date().toISOString(), latitude: 25.1, longitude: 55.2, severity: "low", verificationStatus: "pending", region: "UAE", geolocationPrecision: "approximate", metadata: { overlay: "aircraft", altitude: 21000, heading: 143 } },
+  ],
+  fires: [
+    { id: "fire-1", title: "NASA FIRMS thermal anomaly", source: "FIRMS sample", timestamp: new Date().toISOString(), latitude: 34.6, longitude: 36.2, severity: "medium", verificationStatus: "pending", region: "Levant", geolocationPrecision: "approximate", metadata: { overlay: "fire", hotspot: true } },
+  ],
+  satelliteHotspots: [
+    { id: "hotspot-1", title: "Satellite hotspot alert", source: "Satellite sample", timestamp: new Date().toISOString(), latitude: 31.7, longitude: 44.1, severity: "medium", verificationStatus: "pending", region: "Mesopotamia", geolocationPrecision: "unknown", metadata: { overlay: "satellite", hotspot: true } },
+  ],
+};
 
 const LIVE_TICKER = [
   "Wave 22 launched — UAE Patriot intercepts confirmed — Source: UAE MoD",
@@ -1199,7 +1225,7 @@ function SettingsPanel({
   </div>;
 }
 
-function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,setWatchItems,heuristicAlerts,heuristicSummary,watchlistSummary,incidents,onFocusIncident,selectedTimezone,savedSessions,onSaveSession,onLoadSession,onDeleteSession,trendWindowId,setTrendWindowId,trendAnalytics,aiConfig}){
+function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,setWatchItems,heuristicAlerts,heuristicSummary,watchlistSummary,incidents,onFocusIncident,selectedTimezone,savedSessions,onSaveSession,onLoadSession,onDeleteSession,trendWindowId,setTrendWindowId,trendAnalytics,aiConfig,pinnedIncidentIds,onPinIncident,incidentNotes,onAddNote,onUpdateNote,onDeleteNote,selectedIncidentIds,setSelectedIncidentIds,entityGraph,selectedEntityId,onSelectEntity,narratives}){
   const [tab,setTab]=useState("monitor");
   const [sourceFilter,setSourceFilter]=useState("ALL");
   const [evFilter,setEvFilter]=useState("ALL");
@@ -1308,6 +1334,21 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
       </div>
 
       <WatchlistPanel watchItems={watchItems} setWatchItems={setWatchItems} timeRange={timeRange} watchlistSummary={watchlistSummary}/>
+      <PinnedIncidentPanel incidents={incidents} pinnedIncidentIds={pinnedIncidentIds} onPin={onPinIncident} />
+      <BriefingPanel incidents={incidents} selectedIncidentIds={selectedIncidentIds} setSelectedIncidentIds={setSelectedIncidentIds} pinnedIncidentIds={pinnedIncidentIds} watchlistSummary={watchlistSummary} trendSummary={trendAnalytics.incidentDelta?.trend} notesByIncident={incidentNotes} />
+      <EntityGraphPanel graph={entityGraph} selectedEntityId={selectedEntityId} onSelectEntity={onSelectEntity} />
+      <NarrativePanel narratives={narratives} />
+      <div style={{...panelShell,padding:8}}>
+        <div style={{fontSize:10,color:C.cyan,fontFamily:C.mono,marginBottom:6}}>ANALYST NOTES</div>
+        {incidents.slice(0,4).map((incident)=>{
+          const notes = incidentNotes[incident.incidentId] || [];
+          return <div key={incident.incidentId} style={{border:`1px solid ${C.border}`,padding:6,marginBottom:6}}>
+            <div style={{fontSize:8,color:C.text,marginBottom:4}}>{incident.title}</div>
+            {notes.slice(0,3).map((note)=><div key={note.noteId} style={{display:"flex",justifyContent:"space-between",gap:4,fontSize:7.5,color:C.textDim,marginBottom:3}}><span>{note.analyst} · {new Date(note.timestamp).toISOString().slice(0,16).replace("T"," ")}Z · {note.text}</span><span><button onClick={()=>{const text=window.prompt("Edit note", note.text); if(text!=null) onUpdateNote(incident.incidentId,note.noteId,{text});}} style={{background:"none",border:"none",color:C.cyan,fontSize:7,cursor:"pointer"}}>edit</button><button onClick={()=>onDeleteNote(incident.incidentId,note.noteId)} style={{background:"none",border:"none",color:C.red,fontSize:7,cursor:"pointer"}}>del</button></span></div>)}
+            <button onClick={()=>{const analyst=window.prompt("Analyst","Analyst-1")||"Analyst-1"; const text=window.prompt("Note text"); if(text) onAddNote(incident.incidentId,{analyst,text});}} style={{fontSize:7,padding:"2px 5px",border:`1px solid ${C.border}`,background:"none",color:C.cyan}}>+ note</button>
+          </div>;
+        })}
+      </div>
       <SavedSessionsPanel onSave={onSaveSession} onLoad={onLoadSession} sessions={savedSessions} onDelete={onDeleteSession} />
       <TrendPanel trendWindowId={trendWindowId} setTrendWindowId={setTrendWindowId} trendAnalytics={trendAnalytics} />
 
@@ -1591,6 +1632,11 @@ export default function GEOINTv10(){
   const [savedSessions, setSavedSessions] = useState(() => loadSavedSessions());
   const [historyStore, setHistoryStore] = useState(() => loadHistoryStore());
   const [trendWindowId, setTrendWindowId] = useState(() => persistedBootstrap.trendWindowId || "24h");
+  const [pinnedIncidentIds, setPinnedIncidentIds] = useState(() => persistedBootstrap.pinnedIncidentIds || []);
+  const [incidentNotes, setIncidentNotes] = useState(() => persistedBootstrap.incidentNotes || {});
+  const [selectedIncidentIds, setSelectedIncidentIds] = useState(() => persistedBootstrap.selectedIncidentIds || []);
+  const [overlayState, setOverlayState] = useState(() => ({ ...DEFAULT_OVERLAYS, ...(persistedBootstrap.overlayState || {}) }));
+  const [selectedEntityId, setSelectedEntityId] = useState(() => persistedBootstrap.selectedEntityId || null);
   const [activeOverlay,setActiveOverlay]=useState("chat");
   const [incidentFocusRequest,setIncidentFocusRequest]=useState(null);
   const mapShellRef=useRef(null);
@@ -1614,6 +1660,20 @@ export default function GEOINTv10(){
     windowId: trendWindowId,
     watchItems,
   }), [historyStore, trendWindowId, watchItems]);
+  const entityGraph = useMemo(() => buildEntityGraph({ events: filteredFeed.events || [], incidents }), [filteredFeed.events, incidents]);
+  const narratives = useMemo(() => extractNarratives(filteredFeed.events || []), [filteredFeed.events]);
+  const overlayEvents = useMemo(() => [
+    ...(overlayState.vessels ? SAMPLE_OVERLAYS.vessels : []),
+    ...(overlayState.aircraft ? SAMPLE_OVERLAYS.aircraft : []),
+    ...(overlayState.fires ? SAMPLE_OVERLAYS.fires : []),
+    ...(overlayState.satelliteHotspots ? SAMPLE_OVERLAYS.satelliteHotspots : []),
+  ], [overlayState]);
+
+  const entityFilteredEvents = useMemo(() => {
+    if (!selectedEntityId || !selectedEntityId.startsWith("actor:")) return filteredFeed.events || [];
+    const term = selectedEntityId.split(":")[1];
+    return (filteredFeed.events || []).filter((event) => `${event.title || ""} ${event.summary || ""}`.includes(term));
+  }, [selectedEntityId, filteredFeed.events]);
 
   useEffect(() => {
     let active = true;
@@ -1633,8 +1693,8 @@ export default function GEOINTv10(){
       incidents,
     });
     setHistoryStore(merged);
-    pushBackendHistorySnapshot({ events: filteredFeed.events || [], incidents }).catch(() => {});
-  }, [filteredFeed.events, incidents]);
+    pushBackendHistorySnapshot({ events: filteredFeed.events || [], incidents, trajectories: filteredFeed.trajectories || [], analystNotes: Object.values(incidentNotes).flat(), entityNodes: entityGraph.nodes || [], narratives, watchlists: watchItems }).catch(() => {});
+  }, [filteredFeed.events, incidents, filteredFeed.trajectories, incidentNotes, entityGraph.nodes, narratives, watchItems]);
 
   useEffect(() => {
     savePersistedState({
@@ -1649,13 +1709,18 @@ export default function GEOINTv10(){
       selectedFilters: {},
       trendWindowId,
       mapFocusState: incidentFocusRequest,
+      pinnedIncidentIds,
+      incidentNotes,
+      selectedIncidentIds,
+      overlayState,
+      selectedEntityId,
       history: {
         recentEvents: (filteredFeed.events || []).slice(0, 30),
         recentIncidents: incidents.slice(0, 20),
       },
       historyStore,
     });
-  }, [watchItems, timeRange.id, timezone.id, themeId, uiPrefs, aiConfig, savedSessions, incidentFocusRequest, filteredFeed.events, incidents, trendWindowId, historyStore]);
+  }, [watchItems, timeRange.id, timezone.id, themeId, uiPrefs, aiConfig, savedSessions, incidentFocusRequest, filteredFeed.events, incidents, trendWindowId, historyStore, pinnedIncidentIds, incidentNotes, selectedIncidentIds, overlayState, selectedEntityId]);
 
   const saveCurrentSession = (name) => {
     const next = saveSessionSnapshot({
@@ -1763,6 +1828,31 @@ export default function GEOINTv10(){
     URL.revokeObjectURL(url);
   };
 
+  const togglePinIncident = (incidentId) => setPinnedIncidentIds((prev) => prev.includes(incidentId) ? prev.filter((id) => id !== incidentId) : [...prev, incidentId]);
+
+  const addIncidentNote = (incidentId, note) => {
+    setIncidentNotes((prev) => ({
+      ...prev,
+      [incidentId]: [{ noteId: `note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, timestamp: new Date().toISOString(), analyst: note.analyst || "Analyst", text: note.text || "" }, ...(prev[incidentId] || [])],
+    }));
+  };
+
+  const updateIncidentNote = (incidentId, noteId, patch) => {
+    setIncidentNotes((prev) => ({
+      ...prev,
+      [incidentId]: (prev[incidentId] || []).map((note) => note.noteId === noteId ? { ...note, ...patch, timestamp: new Date().toISOString() } : note),
+    }));
+  };
+
+  const deleteIncidentNote = (incidentId, noteId) => {
+    setIncidentNotes((prev) => ({
+      ...prev,
+      [incidentId]: (prev[incidentId] || []).filter((note) => note.noteId !== noteId),
+    }));
+  };
+
+  const toggleOverlay = (key) => setOverlayState((prev) => ({ ...prev, [key]: !prev[key] }));
+
   const importSessions = (payload) => {
     if (!payload || typeof payload !== "object") return { ok: false, count: 0, message: "Session payload must be a JSON object." };
     if (!Array.isArray(payload.savedSessions)) return { ok: false, count: 0, message: "Expected a savedSessions array in import file." };
@@ -1819,7 +1909,7 @@ export default function GEOINTv10(){
 
         <main style={{display:"flex",flexDirection:"column",minHeight:"calc(100vh - 86px)",flex:1}}>
           <div ref={mapShellRef} style={{height:"clamp(320px, 56vh, 680px)",borderBottom:`1px solid ${C.border}`,position:"relative",isolation:"isolate"}}>
-            <MapView selected={selected} setSelected={setSelected} visibleTrajectories={filteredFeed.trajectories} visibleEvents={filteredFeed.events} incidentFocusRequest={incidentFocusRequest}/>
+            <MapView selected={selected} setSelected={setSelected} visibleTrajectories={filteredFeed.trajectories} visibleEvents={[...entityFilteredEvents, ...overlayEvents]} incidentFocusRequest={incidentFocusRequest}/><div style={{position:"absolute",left:10,bottom:10,zIndex:650,...panelShell,padding:7}}><OverlayControls overlayState={overlayState} onToggle={toggleOverlay} /></div>
             <div style={{position:"absolute",right:12,bottom:92,zIndex:500,display:"flex",flexDirection:"column",gap:6,padding:6,border:`1px solid ${C.border}`,borderRadius:8,background:"rgba(6,11,18,0.78)",backdropFilter:"blur(3px)"}}>
               <button aria-label="Open AI analysis panel" onClick={()=>{setAiOpen(v=>!v);setActiveOverlay("ai");}} style={floatingBtn} title="AI Analysis"><ControlIcon type="ai"/></button>
               <button aria-label="Open live chat panel" onClick={()=>{setChatOpen(v=>!v);setActiveOverlay("chat");}} style={floatingBtn} title="Live Chat"><ControlIcon type="chat"/></button>
@@ -1831,7 +1921,7 @@ export default function GEOINTv10(){
           </div>
 
           <div style={{flex:1,minHeight:320}}>
-            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed} watchItems={watchItems} setWatchItems={setWatchItems} heuristicAlerts={heuristicAlerts} heuristicSummary={heuristicSummary} watchlistSummary={watchlistSummary} incidents={incidents} selectedTimezone={timezone} savedSessions={savedSessions} onSaveSession={saveCurrentSession} onLoadSession={loadSession} onDeleteSession={deleteSession} onFocusIncident={(incident)=>setIncidentFocusRequest({ incidentId: incident.incidentId, eventIds: incident.eventIds })} trendWindowId={trendWindowId} setTrendWindowId={setTrendWindowId} trendAnalytics={trendAnalytics} aiConfig={aiConfig}/>
+            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed} watchItems={watchItems} setWatchItems={setWatchItems} heuristicAlerts={heuristicAlerts} heuristicSummary={heuristicSummary} watchlistSummary={watchlistSummary} incidents={incidents} selectedTimezone={timezone} savedSessions={savedSessions} onSaveSession={saveCurrentSession} onLoadSession={loadSession} onDeleteSession={deleteSession} onFocusIncident={(incident)=>setIncidentFocusRequest({ incidentId: incident.incidentId, eventIds: incident.eventIds })} trendWindowId={trendWindowId} setTrendWindowId={setTrendWindowId} trendAnalytics={trendAnalytics} aiConfig={aiConfig} pinnedIncidentIds={pinnedIncidentIds} onPinIncident={togglePinIncident} incidentNotes={incidentNotes} onAddNote={addIncidentNote} onUpdateNote={updateIncidentNote} onDeleteNote={deleteIncidentNote} selectedIncidentIds={selectedIncidentIds} setSelectedIncidentIds={setSelectedIncidentIds} entityGraph={entityGraph} selectedEntityId={selectedEntityId} onSelectEntity={setSelectedEntityId} narratives={narratives} />
           </div>
         </main>
       </div>

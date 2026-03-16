@@ -124,7 +124,7 @@ async function getNormalizedEventsPayload() {
   const events = dedupeById(Object.values(state.byProvider).flatMap((entry) => entry.events || []));
   const sourceStatuses = sourceManager.snapshot();
   const feed = toFeed(events, sourceStatuses);
-  appendSnapshot({ events: feed.events, incidents: [] });
+  appendSnapshot({ events: feed.events, incidents: [], trajectories: feed.trajectories || [] });
   return feed;
 }
 
@@ -204,9 +204,38 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+
+  if (req.method === 'GET' && req.url === '/history/events') {
+    const store = safeReadStore();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ events: store.events || [], updatedAt: store.updatedAt }));
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/history/incidents') {
+    const store = safeReadStore();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ incidents: store.incidents || [], analystNotes: store.analystNotes || [], updatedAt: store.updatedAt }));
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/history/entities') {
+    const store = safeReadStore();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ entities: store.entityNodes || [], updatedAt: store.updatedAt }));
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/history/narratives') {
+    const store = safeReadStore();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ narratives: store.narratives || [], updatedAt: store.updatedAt }));
+    return;
+  }
+
   if (req.method === 'POST' && req.url === '/history/snapshot') {
     const body = await parseRequestBody(req);
-    const merged = appendSnapshot({ events: body.events || [], incidents: body.incidents || [] });
+    const merged = appendSnapshot({ events: body.events || [], incidents: body.incidents || [], trajectories: body.trajectories || [], analystNotes: body.analystNotes || [], entityNodes: body.entityNodes || [], narratives: body.narratives || [], watchlists: body.watchlists || [] });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(merged));
     return;
