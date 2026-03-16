@@ -1,5 +1,6 @@
 const DEFAULT_REDDIT_SUBREDDITS = ['worldnews', 'geopolitics', 'news'];
 const DEFAULT_X_QUERY = '(geopolitics OR conflict OR diplomacy) -is:retweet lang:en';
+const DEFAULT_ACLED_QUERY = 'Middle East';
 
 function parseList(value, fallback = []) {
   if (!value) return fallback;
@@ -51,6 +52,16 @@ function sourceRegistryFromEnv(env = process.env) {
       clientId: env.REDDIT_CLIENT_ID || '',
       clientSecret: env.REDDIT_CLIENT_SECRET || '',
       userAgent: env.REDDIT_USER_AGENT || 'geoint-live-monitor/1.0',
+    },
+    acled: {
+      key: 'acled',
+      label: 'ACLED',
+      enabled: boolFromEnv(env.GEOINT_ENABLE_ACLED, false),
+      refreshMs: Number(env.GEOINT_ACLED_REFRESH_MS || 240000),
+      query: env.GEOINT_ACLED_QUERY || DEFAULT_ACLED_QUERY,
+      limit: Number(env.GEOINT_ACLED_LIMIT || 40),
+      apiKey: env.ACLED_API_KEY || '',
+      email: env.ACLED_EMAIL || '',
     },
     x: {
       key: 'x',

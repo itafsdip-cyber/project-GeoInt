@@ -84,3 +84,14 @@ export const buildDemoFeed = ({ alerts, events, timeline, trajectories, sources 
   },
   generatedAt: DEMO_CLOCK_UTC.toISOString(),
 });
+
+export const buildEmptyLiveFeed = (reason = "No live data") => enrichFeedWithOsint({
+  alerts: [],
+  events: [],
+  timeline: [],
+  trajectories: [],
+  sources: [],
+  sourceStatuses: {},
+  generatedAt: new Date().toISOString(),
+  metadata: { reason },
+});

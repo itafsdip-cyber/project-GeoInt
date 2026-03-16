@@ -2,8 +2,8 @@
 
 ## Current runtime truth
 - The app now has a **real live-data service boundary** (`src/services/data/liveDataService.js`) that attempts to load normalized live data from `VITE_GEOINT_LIVE_API_BASE/events/normalized`.
-- If no live provider is configured (or unreachable), the UI transparently falls back to demo adapters and reports `LIVE UNAVAILABLE` with reason text in the command bar.
-- No fake “live” records are fabricated and presented as real.
+- If no live provider is configured (or unreachable), the UI now shows an honest empty live feed with status/error context (no synthetic demo substitution).
+- AI availability does not gate source-backed events; event/news rendering comes directly from normalized provider payloads.
 
 ## What is live-ready now
 - Canonical normalized event model with required fields is defined in `src/services/data/normalizedEventModel.js`.
@@ -22,3 +22,9 @@
 3. Add deduplication, provenance scoring, and confidence updates server-side.
 4. Configure `VITE_GEOINT_LIVE_API_BASE` in deployment environments.
 5. Add auth/rate-limit controls for production providers.
+
+
+## Source truth matrix (vNext)
+- **Truly live without credentials:** GDELT, RSS
+- **Live if credentials are configured:** ACLED, Reddit, X
+- **Explicit health states surfaced:** `active`, `disabled`, `auth_missing`, `rate_limited`, `stale`, `error` with last success and last error metadata.

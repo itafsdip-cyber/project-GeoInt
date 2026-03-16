@@ -12,22 +12,22 @@ try {
 }
 
 const { sourceRegistryFromEnv } = require('./api/sourceRegistry.cjs');
+const { createSourceManager } = require('./api/sourceManager.cjs');
 const { fetchGdeltEvents } = require('./api/connectors/gdeltConnector.cjs');
 const { fetchRedditEvents } = require('./api/connectors/redditConnector.cjs');
 const { fetchXEvents } = require('./api/connectors/xConnector.cjs');
 const { fetchRssEvents } = require('./api/connectors/rssConnector.cjs');
+const { fetchAcledEvents } = require('./api/connectors/acledConnector.cjs');
+const { buildTrajectories } = require('./api/trajectory.cjs');
+const { appendSnapshot, safeReadStore } = require('./api/persistenceStore.cjs');
 
 const PORT = process.env.PORT || 3001;
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 
 const registry = sourceRegistryFromEnv();
+const sourceManager = createSourceManager(registry);
 const state = {
-  byProvider: {
-    gdelt: { nextPollAt: 0, events: [], status: null },
-    reddit: { nextPollAt: 0, events: [], status: null },
-    x: { nextPollAt: 0, events: [], status: null },
-    rss: { nextPollAt: 0, events: [], status: null },
-  },
+  byProvider: Object.fromEntries(Object.keys(registry).map((key) => [key, { nextPollAt: 0, events: [], status: null }])),
 };
 
 function setCors(res) {
@@ -39,7 +39,7 @@ function setCors(res) {
 function dedupeById(events) {
   const seen = new Set();
   return events.filter((event) => {
-    if (seen.has(event.id)) return false;
+    if (!event?.id || seen.has(event.id)) return false;
     seen.add(event.id);
     return true;
   });
@@ -49,23 +49,25 @@ function toFeed(events, sourceStatuses) {
   const ordered = [...events].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   const alerts = ordered.filter((event) => event.severity === 'high' || event.severity === 'critical').slice(0, 40);
   const timeline = ordered.slice(0, 120);
+  const trajectories = buildTrajectories(ordered).slice(0, 80);
+
   const sourceCards = Object.values(sourceStatuses).filter(Boolean).map((status) => ({
     id: `source-${status.provider}`,
     type: 'source',
     category: 'source',
-    title: status.provider.toUpperCase(),
+    title: String(status.provider || 'source').toUpperCase(),
     source: status.provider,
     timestamp: status.checkedAt,
     latitude: null,
     longitude: null,
-    severity: status.state === 'active' ? 'low' : 'medium',
-    verificationStatus: status.state === 'active' ? 'verified' : 'pending',
+    severity: status.active ? 'low' : 'medium',
+    verificationStatus: status.active ? 'verified' : 'pending',
     region: 'Global',
     metadata: {
-      name: status.provider.toUpperCase(),
+      name: String(status.provider || 'source').toUpperCase(),
       type: 'Provider',
       bias: 'N/A',
-      credibility: status.state === 'active' ? 80 : 45,
+      credibility: status.active ? 80 : 45,
       health: status.state,
       reason: status.reason,
       url: '#',
@@ -76,7 +78,7 @@ function toFeed(events, sourceStatuses) {
     alerts,
     events: ordered,
     timeline,
-    trajectories: [],
+    trajectories,
     sources: sourceCards,
     sourceStatuses,
     generatedAt: new Date().toISOString(),
@@ -91,21 +93,21 @@ async function refreshProvider(providerKey, fetcher, config) {
   try {
     const result = await fetcher(config);
     providerState.events = Array.isArray(result.events) ? result.events : [];
-    providerState.status = result.status || {
+    providerState.status = sourceManager.updateStatus(providerKey, result.status || {
       provider: providerKey,
       state: 'error',
       reason: 'No status returned',
       checkedAt: new Date().toISOString(),
-    };
+    }, config);
   } catch (error) {
     providerState.events = [];
-    providerState.status = {
+    providerState.status = sourceManager.updateStatus(providerKey, {
       provider: providerKey,
       state: 'error',
       reason: 'Connector failed',
       lastError: error.message,
       checkedAt: new Date().toISOString(),
-    };
+    }, config);
   }
   providerState.nextPollAt = now + config.refreshMs;
 }
@@ -113,26 +115,17 @@ async function refreshProvider(providerKey, fetcher, config) {
 async function getNormalizedEventsPayload() {
   await Promise.all([
     refreshProvider('gdelt', fetchGdeltEvents, registry.gdelt),
+    refreshProvider('rss', fetchRssEvents, registry.rss),
+    refreshProvider('acled', fetchAcledEvents, registry.acled),
     refreshProvider('reddit', fetchRedditEvents, registry.reddit),
     refreshProvider('x', fetchXEvents, registry.x),
-    refreshProvider('rss', fetchRssEvents, registry.rss),
   ]);
 
-  const events = dedupeById([
-    ...state.byProvider.gdelt.events,
-    ...state.byProvider.reddit.events,
-    ...state.byProvider.x.events,
-    ...state.byProvider.rss.events,
-  ]);
-
-  const sourceStatuses = {
-    gdelt: state.byProvider.gdelt.status || { provider: 'gdelt', state: 'unavailable', reason: 'No status reported', checkedAt: new Date().toISOString() },
-    reddit: state.byProvider.reddit.status || { provider: 'reddit', state: 'unavailable', reason: 'No status reported', checkedAt: new Date().toISOString() },
-    x: state.byProvider.x.status || { provider: 'x', state: 'unavailable', reason: 'No status reported', checkedAt: new Date().toISOString() },
-    rss: state.byProvider.rss.status || { provider: 'rss', state: 'unavailable', reason: 'No status reported', checkedAt: new Date().toISOString() },
-  };
-
-  return toFeed(events, sourceStatuses);
+  const events = dedupeById(Object.values(state.byProvider).flatMap((entry) => entry.events || []));
+  const sourceStatuses = sourceManager.snapshot();
+  const feed = toFeed(events, sourceStatuses);
+  appendSnapshot({ events: feed.events, incidents: [] });
+  return feed;
 }
 
 function proxyAnthropic(req, res, body) {
@@ -172,6 +165,17 @@ function proxyAnthropic(req, res, body) {
   proxyReq.end();
 }
 
+async function parseRequestBody(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  if (chunks.length === 0) return {};
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    return {};
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   setCors(res);
 
@@ -193,11 +197,24 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && req.url === '/history') {
+    const store = safeReadStore();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(store));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/history/snapshot') {
+    const body = await parseRequestBody(req);
+    const merged = appendSnapshot({ events: body.events || [], incidents: body.incidents || [] });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(merged));
+    return;
+  }
+
   if (req.method === 'POST' && req.url === '/v1/messages') {
     let body = '';
-    req.on('data', (chunk) => {
-      body += chunk.toString();
-    });
+    req.on('data', (chunk) => { body += chunk.toString(); });
     req.on('end', () => proxyAnthropic(req, res, body));
     return;
   }

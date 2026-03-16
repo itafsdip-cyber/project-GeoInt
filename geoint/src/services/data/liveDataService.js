@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { DATA_MODE } from "./normalizedEventModel";
-import { buildDemoFeed } from "./adapters/demoAdapters";
 import { fetchLiveFeedOrFallback } from "./adapters/liveProviders";
 
 export const filterEventsByTimeRange = (items, rangeHours, now = new Date()) => {
@@ -8,16 +7,16 @@ export const filterEventsByTimeRange = (items, rangeHours, now = new Date()) => 
   return items.filter((item) => new Date(item.timestamp).getTime() >= cutoff);
 };
 
-export function useGeoFeed({ demoInput, refreshMs = 30000 }) {
-  const [mode, setMode] = useState(DATA_MODE.DEMO);
-  const [statusNote, setStatusNote] = useState("Demo mode active");
-  const [feed, setFeed] = useState(() => buildDemoFeed(demoInput));
+export function useGeoFeed({ refreshMs = 30000 }) {
+  const [mode, setMode] = useState(DATA_MODE.LIVE_UNAVAILABLE);
+  const [statusNote, setStatusNote] = useState("Initializing live source checks...");
+  const [feed, setFeed] = useState(() => ({ alerts: [], events: [], timeline: [], trajectories: [], sources: [], sourceStatuses: {}, generatedAt: null }));
 
   useEffect(() => {
     let mounted = true;
 
     const load = async () => {
-      const result = await fetchLiveFeedOrFallback(demoInput);
+      const result = await fetchLiveFeedOrFallback();
       if (!mounted) return;
       setMode(result.mode);
       setStatusNote(result.reason);
@@ -30,7 +29,7 @@ export function useGeoFeed({ demoInput, refreshMs = 30000 }) {
       mounted = false;
       clearInterval(interval);
     };
-  }, [demoInput, refreshMs]);
+  }, [refreshMs]);
 
   return { mode, statusNote, feed };
 }
