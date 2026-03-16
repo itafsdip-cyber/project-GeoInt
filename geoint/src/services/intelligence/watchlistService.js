@@ -1,21 +1,27 @@
 const WATCH_TYPES = {
   REGION: "region",
+  COUNTRY: "country",
   ACTOR: "actor",
-  TOPIC: "topic",
+  CATEGORY: "category",
+  KEYWORD: "keyword",
   SOURCE: "source",
+  PROVIDER: "provider",
 };
 
 const normalizeTerm = (value = "") => String(value).toLowerCase().trim();
 
 export const WATCH_ITEM_TYPES = [
   { id: WATCH_TYPES.REGION, label: "REGION" },
+  { id: WATCH_TYPES.COUNTRY, label: "COUNTRY" },
   { id: WATCH_TYPES.ACTOR, label: "ACTOR" },
-  { id: WATCH_TYPES.TOPIC, label: "TOPIC" },
+  { id: WATCH_TYPES.CATEGORY, label: "CATEGORY" },
+  { id: WATCH_TYPES.KEYWORD, label: "KEYWORD" },
   { id: WATCH_TYPES.SOURCE, label: "SOURCE" },
+  { id: WATCH_TYPES.PROVIDER, label: "PROVIDER" },
 ];
 
 export const createWatchItem = ({ type, term }) => {
-  const normalizedType = Object.values(WATCH_TYPES).includes(type) ? type : WATCH_TYPES.TOPIC;
+  const normalizedType = Object.values(WATCH_TYPES).includes(type) ? type : WATCH_TYPES.KEYWORD;
   const cleanTerm = String(term || "").trim();
   if (!cleanTerm) return null;
   return {
@@ -35,6 +41,7 @@ const eventTextFields = (event = {}) => {
     event.title,
     event.region,
     event.source,
+    metadata.provider,
     metadata.type,
     metadata.category,
     metadata.detail,
@@ -43,53 +50,70 @@ const eventTextFields = (event = {}) => {
   ].filter(Boolean);
 };
 
-export const matchEventAgainstWatchlist = (event, watchItems = []) => {
-  if (!event || !Array.isArray(watchItems) || watchItems.length === 0) return [];
+const matchByType = (item, event, fields) => {
+  const term = item.normalizedTerm || normalizeTerm(item.term);
+  if (!term) return false;
 
-  const fields = eventTextFields(event);
+  if (item.type === WATCH_TYPES.REGION || item.type === WATCH_TYPES.COUNTRY) {
+    return includesTerm(event.region, term) || includesTerm(event.title, term);
+  }
 
-  return watchItems.filter((item) => {
-    const term = item.normalizedTerm || normalizeTerm(item.term);
-    if (!term) return false;
+  if (item.type === WATCH_TYPES.SOURCE) {
+    return includesTerm(event.source, term);
+  }
 
-    if (item.type === WATCH_TYPES.REGION) {
-      return includesTerm(event.region, term) || includesTerm(event.title, term);
-    }
-    if (item.type === WATCH_TYPES.SOURCE) {
-      return includesTerm(event.source, term);
-    }
-    if (item.type === WATCH_TYPES.ACTOR) {
-      return fields.some((field) => includesTerm(field, term));
-    }
+  if (item.type === WATCH_TYPES.PROVIDER) {
+    return includesTerm(event.metadata?.provider, term) || includesTerm(event.osint?.providerCategory, term);
+  }
 
-    return (
-      includesTerm(event.type, term)
-      || includesTerm(event.category, term)
-      || fields.some((field) => includesTerm(field, term))
-    );
-  });
+  if (item.type === WATCH_TYPES.CATEGORY) {
+    return includesTerm(event.category, term) || includesTerm(event.type, term) || includesTerm(event.metadata?.category, term);
+  }
+
+  return fields.some((field) => includesTerm(field, term));
 };
 
-export const buildWatchlistSummary = ({ events = [], watchItems = [] }) => {
+export const matchEventAgainstWatchlist = (event, watchItems = []) => {
+  if (!event || !Array.isArray(watchItems) || watchItems.length === 0) return [];
+  const fields = eventTextFields(event);
+  return watchItems.filter((item) => matchByType(item, event, fields));
+};
+
+export const matchIncidentAgainstWatchlist = (incident, watchItems = []) => {
+  if (!incident || !Array.isArray(watchItems) || watchItems.length === 0) return [];
+  const syntheticEvent = {
+    title: incident.title,
+    region: incident.region,
+    source: (incident.sourceSet || []).join(" "),
+    type: incident.categories?.join(" "),
+    category: incident.categories?.join(" "),
+    metadata: { provider: (incident.sourceSet || []).join(" ") },
+    osint: { actorTags: incident.involvedActors || [] },
+  };
+  return matchEventAgainstWatchlist(syntheticEvent, watchItems);
+};
+
+export const buildWatchlistSummary = ({ events = [], incidents = [], watchItems = [] }) => {
   const summary = {
     totalWatchItems: watchItems.length,
     matchedEvents: 0,
-    matchedByType: {
-      [WATCH_TYPES.REGION]: 0,
-      [WATCH_TYPES.ACTOR]: 0,
-      [WATCH_TYPES.TOPIC]: 0,
-      [WATCH_TYPES.SOURCE]: 0,
-    },
+    matchedIncidents: 0,
+    matchedByType: Object.values(WATCH_TYPES).reduce((acc, type) => ({ ...acc, [type]: 0 }), {}),
   };
 
   events.forEach((event) => {
     const matches = matchEventAgainstWatchlist(event, watchItems);
     if (matches.length === 0) return;
     summary.matchedEvents += 1;
-    const seenTypes = new Set(matches.map((item) => item.type));
-    seenTypes.forEach((type) => {
+    new Set(matches.map((item) => item.type)).forEach((type) => {
       summary.matchedByType[type] = (summary.matchedByType[type] || 0) + 1;
     });
+  });
+
+  incidents.forEach((incident) => {
+    const matches = matchIncidentAgainstWatchlist(incident, watchItems);
+    if (matches.length === 0) return;
+    summary.matchedIncidents += 1;
   });
 
   return summary;

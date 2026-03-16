@@ -33,6 +33,9 @@ const severityScale = [
  * @property {string[]} eventIds
  * @property {string[]} categories
  * @property {string} rationale
+ * @property {string[]} sourceSet
+ * @property {number} averageReliability
+ * @property {"TIER-1"|"TIER-2"|"TIER-3"|"TIER-4"} credibilityTier
  * @property {string|null} mapClusterId
  */
 
@@ -43,6 +46,13 @@ const parseTs = (value) => new Date(value).getTime();
 const toSeverity = (score) => severityScale.find((step) => score >= step.min)?.label || "LOW";
 
 const unique = (items = []) => [...new Set(items.filter(Boolean))];
+
+const toCredibilityTier = (score) => {
+  if (score >= 82) return "TIER-1";
+  if (score >= 68) return "TIER-2";
+  if (score >= 52) return "TIER-3";
+  return "TIER-4";
+};
 
 const eventTypeWeight = (event) => {
   const label = normalizedText(`${event?.type || ""} ${event?.category || ""} ${event?.title || ""}`);
@@ -199,6 +209,7 @@ export const detectIncidents = ({ events = [], now = new Date() }) => {
     const sorted = [...group.events].sort((a, b) => parseTs(a.timestamp) - parseTs(b.timestamp));
     const involvedActors = unique(sorted.flatMap((event) => event.osint?.actorTags || []));
     const sourceCount = unique(sorted.map((event) => event.source)).length;
+    const avgReliability = Math.round(sorted.reduce((acc, event) => acc + (event.osint?.sourceReliability || 50), 0) / Math.max(1, sorted.length));
     const severityScore = scoreIncident({
       events: sorted,
       sourceCount,
@@ -220,6 +231,9 @@ export const detectIncidents = ({ events = [], now = new Date() }) => {
       eventIds: sorted.map((event) => event.id),
       categories: unique(sorted.map((event) => String(event.category || "unknown").toUpperCase())),
       rationale: group.reasons.join(" + "),
+      sourceSet: unique(sorted.map((event) => event.source)),
+      averageReliability: avgReliability,
+      credibilityTier: toCredibilityTier(avgReliability),
       mapClusterId: sorted.find((event) => event.osint?.duplicateClusterId)?.osint?.duplicateClusterId || null,
     };
   }).sort((a, b) => b.severityScore - a.severityScore || parseTs(b.lastUpdated) - parseTs(a.lastUpdated));

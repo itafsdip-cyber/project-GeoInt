@@ -1,4 +1,5 @@
 import { enrichEventGeolocation } from "./geolocation";
+import { refineCredibility } from "../intelligence/credibilityService";
 
 export const DATA_MODE = {
   DEMO: "DEMO",
@@ -11,15 +12,6 @@ const PROVIDER_TYPE_BY_KEY = {
   rss: "rss",
   reddit: "social",
   x: "social",
-};
-
-const RELIABILITY_BY_PROVIDER_TYPE = {
-  official: 84,
-  news: 74,
-  rss: 66,
-  social: 42,
-  open_source: 58,
-  unknown: 52,
 };
 
 const MS_PER_HOUR = 3600000;
@@ -43,6 +35,9 @@ const MS_PER_HOUR = 3600000;
  * @property {Record<string, unknown>} metadata
  * @property {Object} [osint]
  * @property {number} [osint.sourceReliability]
+ * @property {"TIER-1"|"TIER-2"|"TIER-3"|"TIER-4"} [osint.credibilityTier]
+ * @property {"strong"|"limited"|"weak"} [osint.verificationSignalStrength]
+ * @property {"strong"|"moderate"|"limited"} [osint.corroborationLevel]
  * @property {"verified"|"unverified"|"disputed"} [osint.verificationStatus]
  * @property {number} [osint.confidenceScore]
  * @property {number} [osint.crossSourceCount]
@@ -186,7 +181,6 @@ export function enrichEventsWithOsint(events = [], generatedAt = new Date().toIS
     const cluster = clusterByEventId.get(event.id) || null;
     const crossSourceCount = cluster ? Math.max(1, cluster.sourceSet.size) : 1;
     const providerCategory = inferProviderType(event);
-    const sourceReliability = RELIABILITY_BY_PROVIDER_TYPE[providerCategory] || RELIABILITY_BY_PROVIDER_TYPE.unknown;
     const hasCoordinates = event.latitude != null && event.longitude != null;
     const baseVerified = event.verificationStatus === "verified";
     const inferred = !baseVerified;
@@ -195,23 +189,37 @@ export function enrichEventsWithOsint(events = [], generatedAt = new Date().toIS
     if (baseVerified) verificationStatus = "verified";
     else if (providerCategory === "social" && crossSourceCount <= 1) verificationStatus = "disputed";
 
+    const credibility = refineCredibility({
+      providerCategory,
+      verificationStatus,
+      crossSourceCount,
+      timestamp: event.timestamp,
+      inferred,
+      locationConfidence: event.locationConfidence || 0,
+    });
+
     const proximityBoost = cluster && cluster.eventIds.length > 1 ? 8 : 0;
     const confidenceScore = Math.max(
       18,
       Math.min(
         95,
-        Math.round(sourceReliability * 0.58 + crossSourceCount * 10 + (hasCoordinates ? 7 : 0) + proximityBoost + (baseVerified ? 16 : 0)),
+        Math.round(credibility.sourceReliability * 0.58 + crossSourceCount * 10 + (hasCoordinates ? 7 : 0) + proximityBoost + (baseVerified ? 16 : 0)),
       ),
     );
 
     const locationConfidence = hasCoordinates
-      ? Math.min(96, Math.round((event.locationConfidence || 0) * 0.72 + sourceReliability * 0.28 + (crossSourceCount > 1 ? 4 : 0)))
+      ? Math.min(96, Math.round((event.locationConfidence || 0) * 0.72 + credibility.sourceReliability * 0.28 + (crossSourceCount > 1 ? 4 : 0)))
       : Math.max(0, event.locationConfidence || 0);
 
     return {
       ...event,
       osint: {
-        sourceReliability,
+        sourceReliability: credibility.sourceReliability,
+        credibilityTier: credibility.credibilityTier,
+        verificationSignalStrength: credibility.verificationSignalStrength,
+        corroborationLevel: credibility.corroborationLevel,
+        timestampQuality: credibility.timestampQuality,
+        cautionFlags: credibility.cautionFlags,
         verificationStatus,
         confidenceScore,
         crossSourceCount,

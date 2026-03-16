@@ -30,3 +30,7 @@ Current implementation adds a tactical OSINT enrichment layer for normalized eve
 6. **Score explainability**
    - Expose confidence sub-scores (source, corroboration, location, recency).
    - Show why a label was assigned and what evidence is missing.
+
+## Credibility refinement update
+- Added explicit credibility layer fields in OSINT payload: `sourceReliability`, `credibilityTier`, `verificationSignalStrength`, `corroborationLevel`, `timestampQuality`, and `cautionFlags`.
+- Scores remain heuristic and should not be interpreted as hard verification.
