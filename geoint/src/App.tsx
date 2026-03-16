@@ -6,6 +6,8 @@ import { clusterEventsForZoom, precisionRadiusKm } from "./services/data/mapClus
 import { buildHeuristicAlerts, summarizeHeuristicAlerts, ALERT_TYPES } from "./services/intelligence/alertingService";
 import { WATCH_ITEM_TYPES, createWatchItem, matchEventAgainstWatchlist, buildWatchlistSummary } from "./services/intelligence/watchlistService";
 import { detectIncidents } from "./services/intelligence/incidentDetectionService";
+import { loadPersistedState, savePersistedState, loadSavedSessions, saveSessionSnapshot, deleteSessionSnapshot } from "./services/intelligence/persistenceService";
+import { generateIncidentSummary } from "./services/intelligence/incidentSummaryService";
 
 /* ═══════════════════════════════════════════════════════════════════
    GEOINT v10 — pixel-perfect UI match to reference screenshot
@@ -45,7 +47,7 @@ const DEFAULT_WATCH_TERMS = [
   { type: "region", term: "Abu Dhabi" },
   { type: "region", term: "Hormuz" },
   { type: "actor", term: "IRGC" },
-  { type: "topic", term: "maritime" },
+  { type: "keyword", term: "maritime" },
   { type: "source", term: "UAE MoD" },
 ];
 
@@ -848,7 +850,7 @@ function ChatRoom({compact=false, onClose}){
 }
 
 const alertTagStyle = (tag) => {
-  if (tag === ALERT_TYPES.NEW) return { color: C.cyan, bg: `${C.cyan}16` };
+  if (tag === ALERT_TYPES.NEW_INCIDENT) return { color: C.cyan, bg: `${C.cyan}16` };
   if (tag === ALERT_TYPES.MULTI_SOURCE) return { color: C.green, bg: `${C.green}16` };
   if (tag === ALERT_TYPES.HIGH_SEVERITY) return { color: C.red, bg: `${C.red}16` };
   if (tag === ALERT_TYPES.WATCHLIST_MATCH) return { color: C.gold, bg: `${C.gold}16` };
@@ -874,7 +876,7 @@ function WatchlistPanel({ watchItems, setWatchItems, timeRange, watchlistSummary
     <div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:4,padding:10}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,gap:8}}>
         <span style={{fontSize:9,color:C.cyan,letterSpacing:1,fontFamily:C.mono}}>WATCHLIST</span>
-        <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{watchItems.length} ACTIVE · {watchlistSummary.matchedEvents} MATCHES / {timeRange.label}</span>
+        <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{watchItems.length} ACTIVE · {watchlistSummary.matchedEvents} EVT · {watchlistSummary.matchedIncidents} INC / {timeRange.label}</span>
       </div>
       <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
         <select value={watchType} onChange={(e)=>setWatchType(e.target.value)} style={{background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,borderRadius:3,padding:"6px 7px",color:C.text,fontFamily:C.mono,fontSize:9}}>
@@ -897,12 +899,12 @@ function WatchlistPanel({ watchItems, setWatchItems, timeRange, watchlistSummary
   );
 }
 
-function AlertStrip({ heuristicAlerts }) {
+function AlertStrip({ heuristicAlerts, onSelectAlert }) {
   const topAlerts = heuristicAlerts.slice(0, 6);
   return (
     <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:2}}>
       {topAlerts.map((alert) => (
-        <div key={alert.id} style={{minWidth:220,background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${sevColor((alert.severity||"medium").toUpperCase())}`,borderRadius:3,padding:"6px 8px"}}>
+        <button key={alert.id} onClick={()=>onSelectAlert?.(alert)} style={{textAlign:"left",minWidth:220,background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${sevColor((alert.severity||"medium").toUpperCase())}`,borderRadius:3,padding:"6px 8px",cursor:"pointer"}}>
           <div style={{display:"flex",justifyContent:"space-between",gap:6,marginBottom:4}}>
             <span style={{fontSize:8,color:C.text,fontFamily:C.mono}}>{alert.region || "Regional"}</span>
             <span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>{new Date(alert.timestamp).toISOString().slice(11,16)} UTC</span>
@@ -911,7 +913,7 @@ function AlertStrip({ heuristicAlerts }) {
           <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
             {(alert.tags || []).map((tag) => { const style = alertTagStyle(tag); return <span key={`${alert.id}-${tag}`} style={{fontSize:7,color:style.color,background:style.bg,border:`1px solid ${style.color}55`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{tag}</span>; })}
           </div>
-        </div>
+        </button>
       ))}
       {topAlerts.length===0 && <div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,padding:"3px 0"}}>No heuristic alerts for current timeframe.</div>}
     </div>
@@ -920,6 +922,16 @@ function AlertStrip({ heuristicAlerts }) {
 
 function IncidentPanel({ incidents, onFocusIncident }) {
   const topIncidents = incidents.slice(0, 6);
+  const [summaryById, setSummaryById] = useState({});
+  const [loadingId, setLoadingId] = useState(null);
+
+  const runSummary = async (incident) => {
+    setLoadingId(incident.incidentId);
+    const summary = await generateIncidentSummary(incident);
+    setSummaryById((prev) => ({ ...prev, [incident.incidentId]: summary }));
+    setLoadingId(null);
+  };
+
   return (
     <div style={{display:"flex",flexDirection:"column",gap:6}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -930,23 +942,29 @@ function IncidentPanel({ incidents, onFocusIncident }) {
         {topIncidents.map((incident) => {
           const sev = incident.severity || "LOW";
           const col = sevColor(sev);
+          const summary = summaryById[incident.incidentId];
           return (
-            <button key={incident.incidentId} onClick={() => onFocusIncident(incident)} style={{textAlign:"left",background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${col}`,borderRadius:4,padding:"7px 8px",cursor:"pointer"}}>
-              <div style={{display:"flex",justifyContent:"space-between",gap:6,marginBottom:4}}>
-                <span style={{fontSize:7.5,color:C.textDim,fontFamily:C.mono}}>{incident.region}</span>
-                <span style={{fontSize:7,color:col,border:`1px solid ${col}55`,background:`${col}14`,padding:"1px 4px",borderRadius:2,fontFamily:C.mono}}>{sev}</span>
-              </div>
-              <div style={{fontSize:9,color:C.text,lineHeight:1.4,marginBottom:5}}>{incident.title}</div>
+            <div key={incident.incidentId} style={{textAlign:"left",background:C.panel,border:`1px solid ${C.border}`,borderLeft:`2px solid ${col}`,borderRadius:4,padding:"7px 8px"}}>
+              <button onClick={() => onFocusIncident(incident)} style={{all:"unset",display:"block",cursor:"pointer",width:"100%"}}>
+                <div style={{display:"flex",justifyContent:"space-between",gap:6,marginBottom:4}}>
+                  <span style={{fontSize:7.5,color:C.textDim,fontFamily:C.mono}}>{incident.region}</span>
+                  <span style={{fontSize:7,color:col,border:`1px solid ${col}55`,background:`${col}14`,padding:"1px 4px",borderRadius:2,fontFamily:C.mono}}>{sev}</span>
+                </div>
+                <div style={{fontSize:9,color:C.text,lineHeight:1.4,marginBottom:5}}>{incident.title}</div>
+              </button>
               <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:5}}>
                 <span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>SRC {incident.sourceCount}</span>
-                <span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>EVT {incident.eventCount}</span>
-                <span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>SCORE {incident.severityScore}</span>
+                <span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>REL {incident.averageReliability}%</span>
+                <span style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>{incident.credibilityTier}</span>
               </div>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:7,color:C.textDim,fontFamily:C.mono}}>
-                <span>{new Date(incident.firstSeen).toISOString().slice(11,16)}–{new Date(incident.lastUpdated).toISOString().slice(11,16)} UTC</span>
-                <span style={{color:C.cyan}}>JUMP ↗</span>
-              </div>
-            </button>
+              <button onClick={() => runSummary(incident)} disabled={loadingId===incident.incidentId} style={{background:`${C.cyan}14`,border:`1px solid ${C.cyan}44`,color:C.cyan,padding:"3px 6px",borderRadius:3,fontFamily:C.mono,fontSize:7,cursor:"pointer",marginBottom:4}}>{loadingId===incident.incidentId?"...":"GENERATE SUMMARY"}</button>
+              {summary && <div style={{border:`1px solid ${C.border}`,borderRadius:3,padding:6,background:"rgba(0,0,0,0.2)",display:"flex",flexDirection:"column",gap:2}}>
+                <div style={{fontSize:7,color:C.gold,fontFamily:C.mono}}>{summary.mode} · {summary.title}</div>
+                <div style={{fontSize:8,color:C.text}}>{summary.shortSummary}</div>
+                <div style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>ACTORS: {summary.keyActors}</div>
+                <div style={{fontSize:7,color:C.textDim,fontFamily:C.mono}}>CAVEAT: {summary.caveat}</div>
+              </div>}
+            </div>
           );
         })}
       </div>
@@ -955,9 +973,31 @@ function IncidentPanel({ incidents, onFocusIncident }) {
   );
 }
 
+
+
+function SavedSessionsPanel({ onSave, onLoad, sessions, onDelete }) {
+  const [name, setName] = useState("Quick Session");
+  return (
+    <div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:4,padding:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+        <span style={{fontSize:9,color:C.cyan,fontFamily:C.mono}}>SAVED SESSIONS</span>
+        <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{sessions.length} STORED</span>
+      </div>
+      <div style={{display:"flex",gap:5,marginBottom:7}}>
+        <input value={name} onChange={(e)=>setName(e.target.value)} style={{flex:1,background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,borderRadius:3,padding:"6px 8px",color:C.text,fontFamily:C.mono,fontSize:9}}/>
+        <button onClick={()=>onSave(name)} style={{background:`${C.cyan}14`,border:`1px solid ${C.cyan}44`,color:C.cyan,padding:"5px 8px",borderRadius:3,fontFamily:C.mono,fontSize:8}}>SAVE</button>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:120,overflow:"auto"}}>
+        {sessions.map((session)=><div key={session.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",border:`1px solid ${C.border}`,borderRadius:3,padding:"4px 6px",fontFamily:C.mono}}><span style={{fontSize:8,color:C.text}}>{session.name}</span><div style={{display:"flex",gap:5}}><button onClick={()=>onLoad(session)} style={{background:"none",border:`1px solid ${C.border}`,color:C.cyan,fontSize:7,padding:"2px 5px"}}>LOAD</button><button onClick={()=>onDelete(session.id)} style={{background:"none",border:`1px solid ${C.border}`,color:C.red,fontSize:7,padding:"2px 5px"}}>DEL</button></div></div>)}
+      </div>
+    </div>
+  );
+}
+
 /* ─── RIGHT PANEL ──────────────────────────────────────────────── */
-function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,setWatchItems,heuristicAlerts,heuristicSummary,watchlistSummary,incidents,onFocusIncident}){
+function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,setWatchItems,heuristicAlerts,heuristicSummary,watchlistSummary,incidents,onFocusIncident,selectedTimezone,savedSessions,onSaveSession,onLoadSession,onDeleteSession}){
   const [tab,setTab]=useState("monitor");
+  const [sourceFilter,setSourceFilter]=useState("ALL");
   const [evFilter,setEvFilter]=useState("ALL");
   const [expanded,setExpanded]=useState(null);
   const [infExp,setInfExp]=useState(null);
@@ -1033,7 +1073,8 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
   const IC={PROXY:C.orange,ALLIANCE:C.green,SECURITY:C.green,FINANCIAL:C.gold,LEVERAGE:C.red,ECONOMIC:C.cyan,MILITARY:C.orange};
 
   const filteredAlerts = feed.alerts || [];
-  const filteredEvents = feed.events || [];
+  const allEvents = feed.events || [];
+  const filteredEvents = sourceFilter === "ALL" ? allEvents : allEvents.filter((event) => event.source === sourceFilter);
   const filteredTimeline = feed.timeline || [];
   const sourceFeed = feed.sources || [];
   const providerStatuses = orderedProviderStatus(feed.sourceStatuses);
@@ -1063,14 +1104,15 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
       </div>
 
       <WatchlistPanel watchItems={watchItems} setWatchItems={setWatchItems} timeRange={timeRange} watchlistSummary={watchlistSummary}/>
+      <SavedSessionsPanel onSave={onSaveSession} onLoad={onLoadSession} sessions={savedSessions} onDelete={onDeleteSession} />
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:6}}>
         <div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:3,padding:"6px 8px"}}><div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:2}}>WATCHLIST</div><div style={{fontSize:9,color:C.text}}>{heuristicSummary.watchMatches} watchlist matches in last {timeRange.label}</div></div>
         <div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:3,padding:"6px 8px"}}><div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:2}}>MULTI-SOURCE</div><div style={{fontSize:9,color:C.text}}>{heuristicSummary.multiSource} incidents with cross-source corroboration</div></div>
-        <div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:3,padding:"6px 8px"}}><div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:2}}>SPIKE / HIGH</div><div style={{fontSize:9,color:C.text}}>{heuristicSummary.spikes} spike signals · {heuristicSummary.highSeverity} high-severity</div></div>
+        <div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:3,padding:"6px 8px"}}><div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:2}}>SPIKE / HIGH</div><div style={{fontSize:9,color:C.text}}>{heuristicSummary.spikes} spike signals · {heuristicSummary.highSeverity} high-severity · {heuristicSummary.critical} critical</div></div>
       </div>
 
-      <AlertStrip heuristicAlerts={heuristicAlerts}/>
+      <AlertStrip heuristicAlerts={heuristicAlerts} onSelectAlert={(alert)=>{ if (alert.incidentId) { const incident = incidents.find((entry)=>entry.incidentId===alert.incidentId); if (incident) onFocusIncident(incident); } }}/>
       <IncidentPanel incidents={incidents} onFocusIncident={onFocusIncident}/>
 
       <div ref={tabRowRef} style={{display:"flex",border:`1px solid ${C.border}`,borderRadius:8,flexShrink:0,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"thin",padding:"6px",gap:5,WebkitOverflowScrolling:"touch",background:"rgba(10,14,20,0.75)"}}>
@@ -1079,10 +1121,10 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
         ))}
       </div>
 
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}><div style={{display:"flex",gap:6,alignItems:"center",overflowX:"auto",paddingBottom:2}}><span style={{fontSize:8,color:C.textDim,letterSpacing:1,fontFamily:C.mono}}>RANGE</span>{TIME_RANGES.map((r)=><button key={r.id} onClick={()=>setTimeRange(r)} style={{background:timeRange.id===r.id?`${C.cyan}22`:"rgba(255,255,255,0.02)",border:`1px solid ${timeRange.id===r.id?C.cyan:C.border}`,color:timeRange.id===r.id?C.cyan:C.textDim,padding:"4px 9px",fontSize:8,borderRadius:3,cursor:"pointer",fontFamily:C.mono}}>{r.label}</button>)}</div><span style={{fontSize:8,color:dataMode===DATA_MODE.LIVE?C.green:dataMode===DATA_MODE.LIVE_UNAVAILABLE?C.orange:C.textDim,fontFamily:C.mono}}>DATA MODE: {dataMode}{statusNote ? ` · ${statusNote}` : ""}</span></div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}><div style={{display:"flex",gap:6,alignItems:"center",overflowX:"auto",paddingBottom:2}}><span style={{fontSize:8,color:C.textDim,letterSpacing:1,fontFamily:C.mono}}>RANGE</span>{TIME_RANGES.map((r)=><button key={r.id} onClick={()=>setTimeRange(r)} style={{background:timeRange.id===r.id?`${C.cyan}22`:"rgba(255,255,255,0.02)",border:`1px solid ${timeRange.id===r.id?C.cyan:C.border}`,color:timeRange.id===r.id?C.cyan:C.textDim,padding:"4px 9px",fontSize:8,borderRadius:3,cursor:"pointer",fontFamily:C.mono}}>{r.label}</button>)}</div><div style={{display:"flex",gap:6,alignItems:"center"}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>SOURCE</span><select value={sourceFilter} onChange={(e)=>setSourceFilter(e.target.value)} style={{background:"rgba(0,0,0,0.35)",border:`1px solid ${C.border}`,borderRadius:3,padding:"4px 7px",color:C.textDim,fontFamily:C.mono,fontSize:8}}><option value="ALL">ALL</option>{[...new Set((feed.events||[]).map((event)=>event.source))].slice(0,10).map((source)=><option key={source} value={source}>{source}</option>)}</select><span style={{fontSize:8,color:dataMode===DATA_MODE.LIVE?C.green:dataMode===DATA_MODE.LIVE_UNAVAILABLE?C.orange:C.textDim,fontFamily:C.mono}}>DATA MODE: {dataMode}{statusNote ? ` · ${statusNote}` : ""}</span></div></div>
 
       <div style={{display:"flex",flexWrap:"wrap",gap:6,alignItems:"center",...panelShell,padding:"8px 9px"}}>
-        <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono,letterSpacing:1.2}}>SOURCE MONITOR</span>
+        <span style={{fontSize:8,color:C.textDim,fontFamily:C.mono,letterSpacing:1.2}}>SOURCE MONITOR · TZ {selectedTimezone?.label || "UTC"}</span>
         {providerStatuses.map((provider)=><SourceStatusPill key={provider.key} provider={provider}/>)}
       </div>
 
@@ -1107,7 +1149,7 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
                       {isNew&&<span style={{fontSize:7,color:col,fontFamily:C.mono,letterSpacing:1}}>● NEW</span>}
                       <span style={{fontSize:8,color:labelColor,border:`1px solid ${labelColor}55`,background:`${labelColor}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{label}</span>
                       <span style={{fontSize:7.5,color:providerBadge.color,border:`1px solid ${providerBadge.color}55`,background:`${providerBadge.color}16`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{providerBadge.label}</span>
-                      {metaBadges.map((badge)=><span key={`${a.id}-${badge.label}`} style={{fontSize:7,color:badge.color,border:`1px solid ${badge.color}55`,background:`${badge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{badge.label}</span>)}
+                      {metaBadges.map((badge)=><span key={`${a.id}-${badge.label}`} style={{fontSize:7,color:badge.color,border:`1px solid ${badge.color}55`,background:`${badge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{badge.label}</span>)}<span style={{fontSize:7,color:C.textDim,border:`1px solid ${C.textDim}55`,background:`${C.textDim}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{osint.credibilityTier || "TIER-?"} · {osint.verificationSignalStrength || "limited"}</span>
                     </div>
                     <span style={{fontSize:9,color:C.textDim,fontFamily:C.mono}}>{a.region}</span>
                   </div>
@@ -1139,7 +1181,7 @@ function RightPanel({timeRange,setTimeRange,dataMode,statusNote,feed,watchItems,
               const metaBadges=osintMetaBadges(osint);
               const watchMatches = eventWatchMatchById.get(e.id) || [];
               return(<div key={e.id} onClick={()=>setExpanded(isEx?null:e.id)} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`3px solid ${ec}`,borderRadius:3,padding:"10px 14px",cursor:"pointer"}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{new Date(e.timestamp).toISOString().slice(11,16)} UTC</span><span style={{fontSize:8,color:ec,background:`${ec}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{eventType}</span><span style={{fontSize:7.5,color:labelColor,border:`1px solid ${labelColor}55`,background:`${labelColor}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{label}</span><span style={{fontSize:7.5,color:providerBadge.color,border:`1px solid ${providerBadge.color}55`,background:`${providerBadge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{providerBadge.label}</span>{metaBadges.map((badge)=><span key={`${e.id}-${badge.label}`} style={{fontSize:7,color:badge.color,border:`1px solid ${badge.color}55`,background:`${badge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{badge.label}</span>)}{watchMatches.length>0&&<span style={{fontSize:7,color:C.gold,border:`1px solid ${C.gold}55`,background:`${C.gold}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>WATCHLIST MATCH</span>}</div><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.region}</span></div>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{new Date(e.timestamp).toISOString().slice(11,16)} UTC</span><span style={{fontSize:8,color:ec,background:`${ec}18`,padding:"1px 6px",borderRadius:2,fontFamily:C.mono}}>{eventType}</span><span style={{fontSize:7.5,color:labelColor,border:`1px solid ${labelColor}55`,background:`${labelColor}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{label}</span><span style={{fontSize:7.5,color:providerBadge.color,border:`1px solid ${providerBadge.color}55`,background:`${providerBadge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{providerBadge.label}</span>{metaBadges.map((badge)=><span key={`${e.id}-${badge.label}`} style={{fontSize:7,color:badge.color,border:`1px solid ${badge.color}55`,background:`${badge.color}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{badge.label}</span>)}<span style={{fontSize:7,color:C.textDim,border:`1px solid ${C.textDim}55`,background:`${C.textDim}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{osint.credibilityTier || "TIER-?"} · {osint.corroborationLevel || "limited"}</span>{watchMatches.length>0&&<span style={{fontSize:7,color:C.gold,border:`1px solid ${C.gold}55`,background:`${C.gold}16`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>WATCHLIST MATCH</span>}</div><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>{e.region}</span></div>
                 <div style={{fontSize:11.5,color:C.text,lineHeight:"1.4",marginBottom:isEx?6:0,fontFamily:C.mono}}>{e.title}</div>
                 {isEx&&<><div style={{fontSize:9,color:C.textDim,lineHeight:"1.6",marginBottom:7}}>{e.metadata.detail}</div><div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:7}}><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>CONF {osint.confidenceScore ?? "--"}%</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>SOURCES {osint.crossSourceCount ?? 1}</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>REL {osint.sourceReliability ?? "--"}%</span><span style={{fontSize:8,color:C.textDim,fontFamily:C.mono}}>CLUSTER {osint.duplicateClusterId || "N/A"}</span></div>{osint.inferred&&<div style={{fontSize:8,color:C.textDim,fontFamily:C.mono,marginBottom:6}}>Heuristic OSINT signals; verification pending.</div>}<div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:6}}>{(osint.actorTags || []).slice(0,4).map((tag,i)=><span key={`${e.id}-tag-${i}`} style={{fontSize:7.5,color:C.cyan,border:`1px solid ${C.cyan}44`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{tag}</span>)}{(osint.narrativeTags || []).slice(0,3).map((tag,i)=><span key={`${e.id}-narr-${i}`} style={{fontSize:7.5,color:C.purple,border:`1px solid ${C.purple}44`,padding:"1px 5px",borderRadius:2,fontFamily:C.mono}}>{tag}</span>)}</div><div style={{display:"flex",flexWrap:"wrap",gap:3}}>{e.metadata.sources?.map((x,i)=><SrcLink key={i} srcKey={x.key} url={x.url} compact/>)}</div></>}
               </div>);
@@ -1324,17 +1366,19 @@ function DraggablePanel({children,title,onClose,boundsRef,initialPosition,zIndex
 
 /* ─── ROOT ─────────────────────────────────────────────────────── */
 export default function GEOINTv10(){
+  const persistedBootstrap = useMemo(() => loadPersistedState() || {}, []);
   const [selected,setSelected]=useState(null);
   const [searchOpen,setSearch]=useState(false);
   const [blink,setBlink]=useState(true);
   const [time,setTime]=useState(new Date());
   const [tickerItems,setTickerItems]=useState([...TICKER_ITEMS]);
   const [tzOpen,setTzOpen]=useState(false);
-  const [timezone,setTimezone]=useState(TIMEZONES[1]);
+  const [timezone,setTimezone]=useState(() => TIMEZONES.find((tz) => tz.id === persistedBootstrap.timezoneId) || TIMEZONES[1]);
   const [aiOpen,setAiOpen]=useState(false);
   const [chatOpen,setChatOpen]=useState(false);
-  const [timeRange,setTimeRange]=useState(TIME_RANGES[3]);
-  const [watchItems,setWatchItems]=useState(() => DEFAULT_WATCH_TERMS.map((item) => createWatchItem(item)).filter(Boolean));
+  const [timeRange,setTimeRange]=useState(() => TIME_RANGES.find((range) => range.id === persistedBootstrap.timeRangeId) || TIME_RANGES[3]);
+  const [watchItems,setWatchItems]=useState(() => persistedBootstrap.watchItems || DEFAULT_WATCH_TERMS.map((item) => createWatchItem(item)).filter(Boolean));
+  const [savedSessions, setSavedSessions] = useState(() => loadSavedSessions());
   const [activeOverlay,setActiveOverlay]=useState("chat");
   const [incidentFocusRequest,setIncidentFocusRequest]=useState(null);
   const mapShellRef=useRef(null);
@@ -1344,15 +1388,53 @@ export default function GEOINTv10(){
   const demoInput = useMemo(() => ({ alerts: ALERTS, events: EVENTS, timeline: TIMELINE, trajectories: TRAJECTORIES, sources: SOURCES }), []);
   const { mode: dataMode, statusNote, feed } = useGeoFeed({ demoInput, refreshMs: 45000 });
   const filteredFeed = useFilteredGeoFeed({ feed, timeRangeHours: timeRange.hours });
+  const incidents = useMemo(() => detectIncidents({ events: filteredFeed.events }), [filteredFeed.events]);
   const heuristicAlerts = useMemo(() => buildHeuristicAlerts({
     events: filteredFeed.events,
     feedAlerts: filteredFeed.alerts,
+    incidents,
     watchItems,
     timeRangeHours: timeRange.hours,
-  }), [filteredFeed.events, filteredFeed.alerts, watchItems, timeRange.hours]);
+  }), [filteredFeed.events, filteredFeed.alerts, incidents, watchItems, timeRange.hours]);
   const heuristicSummary = useMemo(() => summarizeHeuristicAlerts({ heuristicAlerts, watchItems }), [heuristicAlerts, watchItems]);
-  const watchlistSummary = useMemo(() => buildWatchlistSummary({ events: filteredFeed.events, watchItems }), [filteredFeed.events, watchItems]);
-  const incidents = useMemo(() => detectIncidents({ events: filteredFeed.events }), [filteredFeed.events]);
+  const watchlistSummary = useMemo(() => buildWatchlistSummary({ events: filteredFeed.events, incidents, watchItems }), [filteredFeed.events, incidents, watchItems]);
+
+  useEffect(() => {
+    savePersistedState({
+      watchItems,
+      timeRangeId: timeRange.id,
+      timezoneId: timezone.id,
+      savedSessions,
+      selectedTab: "monitor",
+      selectedFilters: {},
+      mapFocusState: incidentFocusRequest,
+      history: {
+        recentEvents: (filteredFeed.events || []).slice(0, 30),
+        recentIncidents: incidents.slice(0, 20),
+      },
+    });
+  }, [watchItems, timeRange.id, timezone.id, savedSessions, incidentFocusRequest, filteredFeed.events, incidents]);
+
+  const saveCurrentSession = (name) => {
+    const next = saveSessionSnapshot({
+      name,
+      snapshot: {
+        watchItems,
+        timeRangeId: timeRange.id,
+        timezoneId: timezone.id,
+      },
+    });
+    setSavedSessions(next);
+  };
+
+  const loadSession = (session) => {
+    const snap = session?.snapshot || {};
+    if (snap.watchItems) setWatchItems(snap.watchItems);
+    if (snap.timeRangeId) setTimeRange(TIME_RANGES.find((range) => range.id === snap.timeRangeId) || TIME_RANGES[3]);
+    if (snap.timezoneId) setTimezone(TIMEZONES.find((tz) => tz.id === snap.timezoneId) || TIMEZONES[1]);
+  };
+
+  const deleteSession = (sessionId) => setSavedSessions(deleteSessionSnapshot(sessionId));
 
   useEffect(()=>{const t=setInterval(()=>setBlink(b=>!b),900);return()=>clearInterval(t);},[]);
   useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t);},[]);
@@ -1448,7 +1530,7 @@ export default function GEOINTv10(){
           </div>
 
           <div style={{flex:1,minHeight:0,overflow:"hidden"}}>
-            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed} watchItems={watchItems} setWatchItems={setWatchItems} heuristicAlerts={heuristicAlerts} heuristicSummary={heuristicSummary} watchlistSummary={watchlistSummary} incidents={incidents} onFocusIncident={(incident)=>setIncidentFocusRequest({ incidentId: incident.incidentId, eventIds: incident.eventIds })}/>
+            <RightPanel timeRange={timeRange} setTimeRange={setTimeRange} dataMode={dataMode} statusNote={statusNote} feed={filteredFeed} watchItems={watchItems} setWatchItems={setWatchItems} heuristicAlerts={heuristicAlerts} heuristicSummary={heuristicSummary} watchlistSummary={watchlistSummary} incidents={incidents} selectedTimezone={timezone} savedSessions={savedSessions} onSaveSession={saveCurrentSession} onLoadSession={loadSession} onDeleteSession={deleteSession} onFocusIncident={(incident)=>setIncidentFocusRequest({ incidentId: incident.incidentId, eventIds: incident.eventIds })}/>
           </div>
         </main>
       </div>
