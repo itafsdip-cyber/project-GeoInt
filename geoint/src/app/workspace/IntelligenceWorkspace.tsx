@@ -110,8 +110,8 @@ export default function IntelligenceWorkspace() {
   }, [actions]);
 
   const overlays = useMemo(() => pruneStaleOverlayTracks(normalizeOverlayTracks(state.overlayTracks)), [state.overlayTracks]);
-  const incidents = useMemo(() => buildFusedIncidents(state.events), [state.events]);
-  const graph = useMemo(() => buildEntityGraphModel(state.events, state.notes), [state.events, state.notes]);
+  const incidents = useMemo(() => buildFusedIncidents({ events: state.events, existingIncidents: state.incidents }), [state.events, state.incidents]);
+  const graph = useMemo(() => { const model = buildEntityGraphModel({ events: state.events, incidents, narratives: [], notes: state.notes }); return { entities: model.nodes, relations: model.edges }; }, [state.events, state.notes, incidents]);
   const narratives = useMemo(() => buildNarrativeClusters(state.events), [state.events]);
   const activeNarratives = useMemo(() => narratives.filter((item) => !state.activeNarrativeIds.length || state.activeNarrativeIds.includes(item.narrativeId)), [narratives, state.activeNarrativeIds]);
   const selectedNarrative = activeNarratives[0];
